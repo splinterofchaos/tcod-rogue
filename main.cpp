@@ -8,28 +8,29 @@ typedef Vector<int,2> Vec;
 
 int main()
 {
-    TCODConsole::initRoot( 80, 60, "test rogue" );
+    using Cons = TCODConsole;
+    Cons::initRoot( 80, 60, "test rogue" );
+    Cons::root->setDefaultBackground( TCODColor::black );
+    Cons::root->setDefaultForeground( TCODColor::white );
+
+    Vec pos(1,1);
 
     bool gameOver = false;
-    while( not gameOver and not TCODConsole::isWindowClosed() ) 
+    while( not gameOver and not Cons::isWindowClosed() ) 
     {
-        Vec pos(1,1);
-
-        TCODConsole::flush();
-        TCOD_key_t key = TCODConsole::checkForKeypress();
-        if( /*key.pressed*/ true ) 
-        {
-            switch( key.c ) {
-              case 'q': gameOver = true; break;
-              case 'h': case '5': pos.x() -= 1; break;
-              case 'j': case '8': pos.x() += 1; break;
-              case 'k': case '2': pos.y() -= 1; break;
-              case 'l': case '6': pos.y() += 1; break;
-              default: break;
-            }
+        Cons::flush();
+        TCOD_key_t key = Cons::checkForKeypress();
+        switch( key.c ) {
+          case 'q': gameOver = true; break;
+          case 'h': case '5': pos.x() -= 1; break;
+          case 'l': case '8': pos.x() += 1; break;
+          case 'k': case '2': pos.y() -= 1; break;
+          case 'j': case '6': pos.y() += 1; break;
+          default: ;
         }
 
-        TCODConsole::setChar( pos.x(), pos.y(), '@' );
+        Cons::root->clear();
+        Cons::root->setChar( pos.x(), pos.y(), '@' );
     }
 }
 
