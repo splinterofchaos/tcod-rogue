@@ -1,7 +1,7 @@
 
 CC = g++ -std=c++0x
 
-LDFLAGS = -llibtcod/tcod{,xx} 
+LDFLAGS = -Llibtcod -ltcod{,xx} 
 CFLAGS = -Ilibtcod/include
 
 rogue : main.cpp makefile Pure.h Vector.h libtcod
