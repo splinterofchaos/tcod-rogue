@@ -1,0 +1,3 @@
+[submodule "mapgen"]
+	path = mapgen
+	url = https://github.com/splinterofchaos/mapgen-test.git
