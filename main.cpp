@@ -13,7 +13,16 @@ typedef Vector<int,2> Vec;
 
 Vec mapDims( 80, 60 );
 
-Grid<char> grid( 80, 60, '#' );
+struct Tile
+{
+    bool seen, visible;
+    char c;
+
+    Tile() : seen(false), visible(false), c(' ') {}
+    Tile( char c ) : seen(false), visible(false), c(c) {}
+};
+
+Grid<Tile> grid( 80, 60, '#' );
 
 struct Actor
 {
@@ -48,14 +57,12 @@ int main()
 {
     FILE* mapgen = popen( "./mapgen/c++/mapgen", "r" );
 
-    if( not mapgen ) 
-        die_perror( "Error running mapgen" );
-
     // Read the map in, line by line.
     for( unsigned int y=0; y < grid.height; y++ ) {
         char line[500];
         fgets( line, sizeof line, mapgen );
         
+        // Will fail here on first iteration if mapgen failed to open (got 0).
         if( line[0] != '#' ) 
             die( "mapgen: Too few rows. Expected %d, got %d.\n", 
                  grid.height, y );
@@ -83,23 +90,57 @@ int main()
     Cons::root->setDefaultForeground( TCODColor::white );
     Cons::disableKeyboardRepeat();
 
+    TCODMap fov( grid.width, grid.height );
+    for( unsigned int x=0; x < grid.width; x++ )
+        for( unsigned int y=0; y < grid.height; y++ ) {
+            char c = grid.get(x,y).c;
+            fov.setProperties( x, y, c == '.', c == '#' );
+        }
+
     bool gameOver = false;
     while( not gameOver and not Cons::isWindowClosed() ) 
     {
+        // Update FOV if the player has moved.
+        static Vector<int,2> lastPos(-1,-1);
+        if( pos != lastPos ) {
+            fov.computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
+            lastPos = pos;
+        }
+
         Cons::root->clear();
         for( unsigned int x=0; x < grid.width; x++ )
             for( unsigned int y=0; y < grid.height; y++ ) {
-                char c = grid.get( x, y );
-                Cons::root->setChar( x, y, c );
+                Tile& t = grid.get( x, y );
+
+                if( fov.isInFov(x,y) )
+                    t.seen = t.visible = true;
+                else
+                    t.visible = false;
+
+                if( not t.seen )
+                    continue;
+
+                Cons::root->setChar( x, y, t.c );
 
                 using C = TCODColor;
                 C fg = C::white;
                 C bg = C::black;
-                if( c == '#' ) {
-                    fg = C::darkestAzure;
-                } else if( c == '.' ) {
-                    fg = C::darkestHan;
-                    bg = C::darkestGrey;
+                if( t.c == '#' ) {
+                    if( t.visible ) {
+                        bg = C::darkGrey;
+                        fg = C::darkAzure;
+                    }
+                    else {
+                        fg = C::darkestAzure;
+                    }
+                } else if( t.c == '.' ) {
+                    if( t.visible ) {
+                        bg = C::grey;
+                        fg = C::darkestHan;
+                    } else {
+                        bg = C::darkestGrey;
+                        fg = C::lightBlue;
+                    }
                 }
                 
                 Cons::root->setCharForeground( x, y, fg );

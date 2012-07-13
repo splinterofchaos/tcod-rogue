@@ -121,7 +121,7 @@ struct Grid
     size_t width, height;
 
     Grid() : tiles(0), width(0), height(0) {}
-    Grid( size_t w, size_t h, const Tile& t )
+    Grid( size_t w, size_t h, const Tile& t=Tile() )
         : tiles(new Tile[ w * h ]), width(w), height(h)
     { std::fill_n( tiles, area(), t ); }
 
