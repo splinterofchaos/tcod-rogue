@@ -77,6 +77,20 @@ constexpr Container filter( const F& f, Container cont )
     return cont;
 }
 
+template< typename Container, typename T >
+constexpr typename Container::iterator find( const Container& cont, 
+                                             const T& value )
+{
+    return std::find( std::begin(cont), std::end(cont), value );
+}
+
+template< typename Container, typename F >
+constexpr auto find_if( const Container& cont, const F& f )
+    -> decltype( std::begin(cont) )
+{
+    return std::find_if( std::begin(cont), std::end(cont), f );
+}
+
 template< typename Container, typename F >
 constexpr bool all( const F& f, const Container& cont )
 {

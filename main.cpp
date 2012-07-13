@@ -9,12 +9,12 @@
 #include <cstdio>
 #include <algorithm>
 #include <memory>
+#include <list>
+#include <string>
 
 typedef Vector<int,2> Vec;
 
 Vec mapDims( 80, 60 );
-
-Vec pos(0,0); // The player's position.
 
 struct Tile
 {
@@ -28,12 +28,25 @@ struct Tile
 };
 
 Grid<Tile> grid( 80, 60, '#' );
-void initialize_grid();
 
 struct Actor
 {
+    std::string name;
     Vec pos;
 };
+
+std::string playerName;
+
+typedef std::unique_ptr<Actor> ActorPtr;
+typedef std::list<ActorPtr> ActorList;
+
+ActorList actors;
+
+/* 
+ * Run mapgen.
+ * Initialize grid and actors with mapgen output.
+ */
+void generate_map();
 
 void die( const char* fmt, ... );
 void die_perror( const char* msg );
@@ -56,7 +69,7 @@ void render();
 
 int main()
 {
-    initialize_grid();
+    generate_map();
 
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
     TCODConsole::root->setDefaultBackground( TCODColor::black );
@@ -68,29 +81,39 @@ int main()
     {
         render();
 
-        switch( next_pressed_key() ) {
-          case 'q': gameOver = true; break;
+        for( ActorPtr& actorptr : actors )
+        {
+            Actor& actor = *actorptr;
 
-          // Cardinal directions.
-          case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
-          case 'l': case '6': case TCODK_RIGHT: pos.x() += 1; break;
-          case 'k': case '8': case TCODK_UP:    pos.y() -= 1; break;
-          case 'j': case '2': case TCODK_DOWN:  pos.y() += 1; break;
+            // Just for now, we're player-only.
+            if( actor.name != playerName )
+                continue;
 
-          // Diagonals.
-          case 'y': case '7': pos += Vec(-1,-1); break;
-          case 'u': case '9': pos += Vec(+1,-1); break;
-          case 'b': case '1': pos += Vec(-1,+1); break;
-          case 'n': case '3': pos += Vec(+1,+1); break;
+            Vec& pos = actor.pos;
+            switch( next_pressed_key() ) {
+              case 'q': gameOver = true; break;
 
-          default: ;
+              // Cardinal directions.
+              case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
+              case 'l': case '6': case TCODK_RIGHT: pos.x() += 1; break;
+              case 'k': case '8': case TCODK_UP:    pos.y() -= 1; break;
+              case 'j': case '2': case TCODK_DOWN:  pos.y() += 1; break;
+
+              // Diagonals.
+              case 'y': case '7': actor.pos += Vec(-1,-1); break;
+              case 'u': case '9': actor.pos += Vec(+1,-1); break;
+              case 'b': case '1': actor.pos += Vec(-1,+1); break;
+              case 'n': case '3': actor.pos += Vec(+1,+1); break;
+
+              default: ;
+            }
+
+            actor.pos = keep_inside( *TCODConsole::root, actor.pos );
         }
-
-        pos = keep_inside( *TCODConsole::root, pos );
     }
 }
 
-void initialize_grid()
+void generate_map()
 {
     FILE* mapgen = popen( "./mapgen/c++/mapgen", "r" );
 
@@ -111,10 +134,27 @@ void initialize_grid()
     }
 
     char spawnpt[50];
-    if( not fgets(spawnpt, sizeof spawnpt, mapgen) or spawnpt[0] != 'X' )
-        die( "No spawn point!" );
+    while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
+        if( spawnpt[0] != 'X' )
+            continue;
 
-    sscanf( spawnpt, "X %u %u", &pos.x(), &pos.y() );
+        unsigned int x, y;
+        sscanf( spawnpt, "X %u %u", &x, &y );
+        Vec pos = { x, y };
+        std::string name;
+
+        if( not actors.size() ) {
+            // First actor! Initialize as the player.
+            playerName = "player";
+            name = playerName;
+        } else {
+            name = "monst";
+        }
+
+        actors.push_back( ActorPtr(new Actor{name,pos}) );
+    }
+    if( actors.size() == 0 )
+        die( "No spawn point!" );
 
     pclose( mapgen );
 }
@@ -135,10 +175,16 @@ void render()
     }
 
     // Update FOV if the player has moved.
-    static Vec lastPos(-1,-1);
-    if( pos != lastPos ) {
-        fov->computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
-        lastPos = pos;
+    auto playerIter = pure::find_if(
+        actors, [](const ActorPtr& aptr){return aptr->name == playerName;} 
+    );
+    if( playerIter != std::end(actors) ) {
+        static Vec lastPos(-1,-1);
+        Vec& pos = (*playerIter)->pos; 
+        if( pos != lastPos ) {
+            fov->computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
+            lastPos = pos;
+        }
     }
 
     TCODConsole::root->clear();
@@ -192,9 +238,17 @@ void render()
         }
     }
 
-    TCODConsole::root->setChar( pos.x(), pos.y(), '@' );
-    TCODConsole::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
-    // Leave background as is.
+    for( auto& actorIter : actors ) {
+
+        Vec& pos = actorIter->pos;
+
+        if( not grid.get(pos).visible )
+            continue;
+
+        TCODConsole::root->setChar( pos.x(), pos.y(), '@' );
+        TCODConsole::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
+        // Leave background as is.
+    }
 
     TCODConsole::flush();
 }
