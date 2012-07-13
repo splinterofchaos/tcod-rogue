@@ -23,7 +23,7 @@ struct Tile
 
     Tile() : seen(false), visible(false), c(' ') {}
 
-    // Allow explicit construction.
+    // Allow implicit construction.
     Tile( char c ) : seen(false), visible(false), c(c) {}
 };
 
