@@ -3,44 +3,41 @@
 
 #include "Vector.h"
 #include "Pure.h"
+#include "Grid.h"
+
+#include <cstdlib>
+#include <cstdio>
+#include <algorithm>
 
 typedef Vector<int,2> Vec;
 
 Vec mapDims( 80, 60 );
 
-struct OffCons // Off-screen Console
-{
-    TCODConsole cons;
-    Vec offset;
-    Vec dims;
-
-    OffCons( Vec dims, Vec off=Vec(0,0) ) 
-        : cons( dims.x(), dims.y() ), 
-          offset( off ),
-          dims( dims )
-    {
-    }
-
-    OffCons( int x, int y ) : OffCons(Vec(x,y)) {}
-    OffCons( int x, int y, int offx, int offy ) 
-        : OffCons( Vec(x,y), Vec(offx,offy) ) 
-    {
-    }
-
-    void clear() { cons.clear(); };
-    void put( Vec v, char c ) { cons.setChar( v.x(), v.y(), c ); }
-};
+Grid<char> grid( 80, 60, '#' );
 
 struct Actor
 {
     Vec pos;
 };
 
-// Adjusts v to keep in on screen. (Based on mapDims.)
-Vec keep_inside( const OffCons&, Vec );
+#include <cstdarg>
+void die( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+    vfprintf( stderr, fmt, vl );
+    va_end( vl );
+    exit( 1 );
+}
 
-// Blit an off-screen console to the root.
-void blit_root( const OffCons& oc );
+void die_perror( const char* msg )
+{
+    perror( msg );
+    exit( 1 );
+}
+
+// Adjusts v to keep in on screen. (Based on mapDims.)
+Vec keep_inside( const TCODConsole&, Vec );
 
 // Waits for the next pressed key. 
 // Does not return on key lift.
@@ -49,6 +46,36 @@ int next_pressed_key();
 
 int main()
 {
+    FILE* mapgen = popen( "./mapgen/c++/mapgen", "r" );
+
+    if( not mapgen ) 
+        die_perror( "Error running mapgen" );
+
+    // Read the map in, line by line.
+    for( unsigned int y=0; y < grid.height; y++ ) {
+        char line[500];
+        fgets( line, sizeof line, mapgen );
+        
+        if( line[0] != '#' ) 
+            die( "mapgen: Too few rows. Expected %d, got %d.\n", 
+                 grid.height, y );
+        if( line[grid.width-1] != '#' )
+            die( "mapgen: Wrong number of columns. Expected %d, got (N\\A).\n",
+                 grid.width );
+
+        std::copy_n( line, grid.width, grid.row_begin(y) );
+    }
+
+    char spawnpt[50];
+    if( not fgets(spawnpt, sizeof spawnpt, mapgen) or spawnpt[0] != 'X' )
+        die( "No spawn point!" );
+
+    Vec pos(0,0);
+    sscanf( spawnpt, "X %u %u", &pos.x(), &pos.y() );
+
+    pclose( mapgen );
+    
+
     using Cons = TCODConsole;
 
     Cons::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
@@ -56,22 +83,15 @@ int main()
     Cons::root->setDefaultForeground( TCODColor::white );
     Cons::disableKeyboardRepeat();
 
-    OffCons dungeonCons( 80-2, 60-2, 0, 0 );
-    dungeonCons.cons.setDefaultBackground( TCODColor::black );
-    dungeonCons.cons.setDefaultForeground( TCODColor::white );
-    dungeonCons.cons.clear();
-
-    Vec pos(0,0);
-
     bool gameOver = false;
     while( not gameOver and not Cons::isWindowClosed() ) 
     {
-
-        dungeonCons.clear();
-        dungeonCons.put( pos, '@' );
-
         Cons::root->clear();
-        blit_root( dungeonCons );
+        for( unsigned int x=0; x < grid.width; x++ )
+            for( unsigned int y=0; y < grid.height; y++ )
+                Cons::root->setChar( x, y, grid.get(x,y) );
+
+        Cons::root->setChar( pos.x(), pos.y(), '@' );
 
         Cons::flush();
 
@@ -93,7 +113,7 @@ int main()
           default: ;
         }
 
-        pos = keep_inside( dungeonCons, pos );
+        pos = keep_inside( *Cons::root, pos );
     }
 }
 
@@ -104,21 +124,12 @@ int _clamp_range( int x, int min, int max )
     return x;
 }
 
-Vec keep_inside( const OffCons& oc, Vec v )
+Vec keep_inside( const TCODConsole& cons, Vec v )
 {
-    v.x( _clamp_range(v.x(), 0, oc.dims.x()-1) );
-    v.y( _clamp_range(v.y(), 0, oc.dims.y()-1) );
+    v.x( _clamp_range(v.x(), 1, cons.getWidth()-1) );
+    v.y( _clamp_range(v.y(), 1, cons.getWidth()-1) );
     return v;
 }
-
-void blit_root( const OffCons& oc )
-{
-    TCODConsole::blit ( 
-        &oc.cons, 0, 0, oc.dims.x(), oc.dims.y(),
-        TCODConsole::root, oc.offset.x(), oc.offset.y()
-    );
-}
-
 
 int next_pressed_key()
 {
