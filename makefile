@@ -8,7 +8,7 @@ obj = .grid.o .random.o
 
 
 rogue : main.cpp makefile Pure.h Vector.h libtcod ${obj}
-	make -C mapgen/c++ -+
+	make -C mapgen/c++
 	${CC} -o rogue main.cpp ${obj} ${CFLAGS} ${LDFLAGS}
 
 .random.o : random.*

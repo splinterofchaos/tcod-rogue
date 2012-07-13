@@ -88,10 +88,27 @@ int main()
     {
         Cons::root->clear();
         for( unsigned int x=0; x < grid.width; x++ )
-            for( unsigned int y=0; y < grid.height; y++ )
-                Cons::root->setChar( x, y, grid.get(x,y) );
+            for( unsigned int y=0; y < grid.height; y++ ) {
+                char c = grid.get( x, y );
+                Cons::root->setChar( x, y, c );
+
+                using C = TCODColor;
+                C fg = C::white;
+                C bg = C::black;
+                if( c == '#' ) {
+                    fg = C::darkestAzure;
+                } else if( c == '.' ) {
+                    fg = C::darkestHan;
+                    bg = C::darkestGrey;
+                }
+                
+                Cons::root->setCharForeground( x, y, fg );
+                Cons::root->setCharBackground( x, y, bg );
+            }
 
         Cons::root->setChar( pos.x(), pos.y(), '@' );
+        Cons::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
+        // Leave background as is.
 
         Cons::flush();
 
