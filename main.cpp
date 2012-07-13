@@ -48,6 +48,7 @@ ActorList actors;
  */
 void generate_map();
 
+/* Exit gracefully. */
 void die( const char* fmt, ... );
 void die_perror( const char* msg );
 
@@ -66,6 +67,9 @@ int next_pressed_key();
  * colorize, and print to libtcod's root.
  */
 void render();
+
+/* True if the tile at pos blocks movement. */
+bool blocked( const Vec& pos );
 
 int main()
 {
@@ -89,7 +93,10 @@ int main()
             if( actor.name != playerName )
                 continue;
 
-            Vec& pos = actor.pos;
+            bool turnOver = true;
+
+turn_start:
+            Vec pos( 0, 0 );
             switch( next_pressed_key() ) {
               case 'q': gameOver = true; break;
 
@@ -100,15 +107,25 @@ int main()
               case 'j': case '2': case TCODK_DOWN:  pos.y() += 1; break;
 
               // Diagonals.
-              case 'y': case '7': actor.pos += Vec(-1,-1); break;
-              case 'u': case '9': actor.pos += Vec(+1,-1); break;
-              case 'b': case '1': actor.pos += Vec(-1,+1); break;
-              case 'n': case '3': actor.pos += Vec(+1,+1); break;
+              case 'y': case '7': pos = Vec(-1,-1); break;
+              case 'u': case '9': pos = Vec(+1,-1); break;
+              case 'b': case '1': pos = Vec(-1,+1); break;
+              case 'n': case '3': pos = Vec(+1,+1); break;
 
-              default: ;
+              default: turnOver = false;
             }
 
-            actor.pos = keep_inside( *TCODConsole::root, actor.pos );
+            pos += actor.pos;
+            if( pos.x() and pos.y() ) {
+                if( not blocked(pos) )
+                    actor.pos = keep_inside( *TCODConsole::root, pos );
+                else
+                    turnOver = false;
+            }
+
+            if( not turnOver )
+                goto turn_start;
+
         }
     }
 }
@@ -282,6 +299,15 @@ int next_pressed_key()
         k = '0' + (k - TCODK_KP0);
 
     return k;
+}
+
+bool blocked( const Vec& pos )
+{
+    if( grid.get(pos).c == '#' )
+        return true;
+    return pure::find_if (
+        actors, [&](const ActorPtr& aptr){return aptr->pos == pos;}
+    ) != std::end(actors);
 }
 
 #include <cstdarg>
