@@ -33,6 +33,7 @@ struct Actor
 {
     std::string name;
     Vec pos;
+    int hp;
 };
 
 std::string playerName;
@@ -41,6 +42,13 @@ typedef std::unique_ptr<Actor> ActorPtr;
 typedef std::list<ActorPtr> ActorList;
 
 ActorList actors;
+
+/* Search for actors by name. */
+ActorList::iterator find_player();
+
+// Used by render() and move_monst().
+std::unique_ptr<TCODMap> fov; // Field of vision.
+std::unique_ptr<TCODDijkstra> playerDistance;
 
 /* 
  * Run mapgen.
@@ -71,6 +79,31 @@ void render();
 /* True if the tile at pos blocks movement. */
 bool blocked( const Vec& pos );
 
+enum Action
+{
+    MOVE,
+    WAIT,
+    ATTACK,
+    QUIT
+};
+
+Action move_player( Actor& );
+
+/*
+ * Move monster. 
+ * If visible by player, move towards and attack player.
+ * Otherwise, sit tight.
+ */
+Action move_monst( Actor& );
+
+ActorList::iterator actor_at( const Vec& pos )
+{
+    return pure::find_if ( 
+        [&](const ActorPtr& aptr) { return aptr->pos == pos; },
+        actors
+    );
+}
+
 int main()
 {
     generate_map();
@@ -80,52 +113,38 @@ int main()
     TCODConsole::root->setDefaultForeground( TCODColor::white );
     TCODConsole::disableKeyboardRepeat();
 
-    bool gameOver = false;
-    while( not gameOver and not TCODConsole::isWindowClosed() ) 
+    bool playerAlive = true;
+    while( playerAlive and not TCODConsole::isWindowClosed() ) 
     {
+        // Remove all dead.
+        actors = pure::filter ( 
+            [&](const ActorPtr& aptr) -> bool 
+            { 
+                if( aptr->hp > 0 )
+                    return true;
+
+                if( aptr->name == playerName )
+                    playerAlive = false;
+                return false;; 
+            },
+            std::move( actors )
+        );
+
         render();
 
         for( ActorPtr& actorptr : actors )
         {
             Actor& actor = *actorptr;
 
-            // Just for now, we're player-only.
+            Action act;
+
             if( actor.name != playerName )
-                continue;
+                act = move_monst( actor );
+            else
+                act = move_player( actor );
 
-            bool turnOver = true;
-
-turn_start:
-            Vec pos( 0, 0 );
-            switch( next_pressed_key() ) {
-              case 'q': gameOver = true; break;
-
-              // Cardinal directions.
-              case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
-              case 'l': case '6': case TCODK_RIGHT: pos.x() += 1; break;
-              case 'k': case '8': case TCODK_UP:    pos.y() -= 1; break;
-              case 'j': case '2': case TCODK_DOWN:  pos.y() += 1; break;
-
-              // Diagonals.
-              case 'y': case '7': pos = Vec(-1,-1); break;
-              case 'u': case '9': pos = Vec(+1,-1); break;
-              case 'b': case '1': pos = Vec(-1,+1); break;
-              case 'n': case '3': pos = Vec(+1,+1); break;
-
-              default: turnOver = false;
-            }
-
-            pos += actor.pos;
-            if( pos.x() and pos.y() ) {
-                if( not blocked(pos) )
-                    actor.pos = keep_inside( *TCODConsole::root, pos );
-                else
-                    turnOver = false;
-            }
-
-            if( not turnOver )
-                goto turn_start;
-
+            if( act == QUIT )
+                return 0;
         }
     }
 }
@@ -168,7 +187,7 @@ void generate_map()
             name = "monst";
         }
 
-        actors.push_back( ActorPtr(new Actor{name,pos}) );
+        actors.push_back( ActorPtr(new Actor{name,pos,20}) );
     }
     if( actors.size() == 0 )
         die( "No spawn point!" );
@@ -176,10 +195,90 @@ void generate_map()
     pclose( mapgen );
 }
 
+Action move_player( Actor& player )
+{
+    bool turnOver = true;
+
+    Vec pos( 0, 0 );
+    switch( next_pressed_key() ) {
+      case 'q': return QUIT;
+
+      // Cardinal directions.
+      case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
+      case 'l': case '6': case TCODK_RIGHT: pos.x() += 1; break;
+      case 'k': case '8': case TCODK_UP:    pos.y() -= 1; break;
+      case 'j': case '2': case TCODK_DOWN:  pos.y() += 1; break;
+
+      // Diagonals.
+      case 'y': case '7': pos = Vec(-1,-1); break;
+      case 'u': case '9': pos = Vec(+1,-1); break;
+      case 'b': case '1': pos = Vec(-1,+1); break;
+      case 'n': case '3': pos = Vec(+1,+1); break;
+
+      case '.': case '5': return WAIT;
+
+      default: turnOver = false;
+    }
+
+    pos += player.pos;
+    if( pos.x() and pos.y() ) {
+        auto actorIter = actor_at( pos );
+        if( actorIter != std::end(actors) ) {
+            (*actorIter)->hp -= 10;
+            return ATTACK;
+        }
+        
+        if( grid.get(pos).c != '#' ) {
+            player.pos = pos;
+
+            /*
+             * move_monst() requires an up-to-date Dijkstra map. It might make
+             * more sense to do this in render(), but that may not be called
+             * before move_most needs it.
+             */
+            fov->computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
+            playerDistance->compute( pos.x(), pos.y() );
+            return MOVE;
+        }
+    }
+
+    // The player has not yet moved (or we would have returned already).
+    return move_player( player );
+}
+
+ActorList::iterator find_player()
+{
+    return pure::find_if (
+        [&](const ActorPtr& aptr) -> bool { return aptr->name == playerName; },
+        actors
+    );
+}
+
+Action move_monst( Actor& monst )
+{
+    int& x = monst.pos.x();
+    int& y = monst.pos.y();
+
+    if( not fov->isInFov(x, y) )
+        return WAIT;
+
+    playerDistance->setPath( x, y );
+    playerDistance->reverse();
+    
+    if( playerDistance->size() <= 1 ) {
+        auto actorIter = find_player();
+        if( actorIter == std::end(actors) )
+            return WAIT;
+        (*actorIter)->hp -= 10;
+        return ATTACK;
+    } else {
+        playerDistance->walk( &x, &y );
+        return MOVE;
+    }
+}
+
 void render()
 {
-    static std::unique_ptr<TCODMap> fov;
-
     if( not fov or fov->getWidth()  != grid.width 
                 or fov->getHeight() != grid.height ) 
     {
@@ -187,26 +286,15 @@ void render()
         for( unsigned int x=0; x < grid.width; x++ )
             for( unsigned int y=0; y < grid.height; y++ ) {
                 bool walkable = (grid.get(x,y).c == '.');
-                fov->setProperties( x, y, walkable, not walkable );
+                fov->setProperties( x, y, walkable, walkable );
             }
-    }
 
-    // Update FOV if the player has moved.
-    auto playerIter = pure::find_if(
-        actors, [](const ActorPtr& aptr){return aptr->name == playerName;} 
-    );
-    if( playerIter != std::end(actors) ) {
-        static Vec lastPos(-1,-1);
-        Vec& pos = (*playerIter)->pos; 
-        if( pos != lastPos ) {
-            fov->computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
-            lastPos = pos;
-        }
+        playerDistance.reset( new TCODDijkstra(fov.get()) );
     }
 
     TCODConsole::root->clear();
 
-    // Draw onto root (r).
+    // Draw onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
         for( unsigned int y=0; y < grid.height; y++ ) 
@@ -264,7 +352,11 @@ void render()
 
         TCODConsole::root->setChar( pos.x(), pos.y(), '@' );
         TCODConsole::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
-        // Leave background as is.
+
+        // Draw background as a function of vitality.
+        //float vitality = 20.f / actorIter->hp * (255/20.f);
+        //TCODColor c( 255.f, vitality, vitality );
+        //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
     TCODConsole::flush();
@@ -305,9 +397,7 @@ bool blocked( const Vec& pos )
 {
     if( grid.get(pos).c == '#' )
         return true;
-    return pure::find_if (
-        actors, [&](const ActorPtr& aptr){return aptr->pos == pos;}
-    ) != std::end(actors);
+    return actor_at(pos) != std::end(actors);
 }
 
 #include <cstdarg>
