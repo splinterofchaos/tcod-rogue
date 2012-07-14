@@ -108,12 +108,38 @@ ActorList::iterator actor_at( const Vec& pos )
 
 int main()
 {
-    generate_grid();
-
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
     TCODConsole::root->setDefaultBackground( TCODColor::black );
     TCODConsole::root->setDefaultForeground( TCODColor::white );
     TCODConsole::disableKeyboardRepeat();
+
+    // A little intro screen. Just asks for the player's name.
+    while( true )
+    {
+        TCODConsole::root->clear();
+
+        TCODConsole::root->setAlignment( TCOD_CENTER );
+        TCODConsole::root->print( 40, 5, "Welcome to this WIP roguelike. " );
+        TCODConsole::root->print( 40, 10, "You may notice sone hitches," );
+
+        TCODConsole::root->setAlignment( TCOD_LEFT );
+        TCODConsole::root->print( 30, 20, "Please enter in your name: " );
+        TCODConsole::root->print( 30, 23, playerName.c_str() );
+
+        TCODConsole::root->flush();
+
+        TCOD_key_t key;
+        do key = TCODConsole::waitForKeypress( true );
+        while( not key.pressed );
+
+        if( key.vk == TCODK_ENTER )
+          break;
+
+        if( key.c )
+            playerName.push_back( key.c );
+    }
+
+    generate_grid();
 
     bool playerAlive = true;
     while( playerAlive and not TCODConsole::isWindowClosed() ) 
@@ -155,7 +181,7 @@ int main()
     }
 
     if( not playerAlive )
-        printf( "You have died. Have a nice day.\n" );
+        printf( "You, %s, have died. Have a nice day.\n", playerName.c_str() );
 }
 
 void generate_grid()
@@ -193,7 +219,6 @@ void generate_grid()
 
         if( not actors.size() ) {
             // First actor! Initialize as the player.
-            playerName = "player";
             actor->name = playerName;
             wplayer = actor;
         } else {
