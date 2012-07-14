@@ -38,13 +38,12 @@ struct Actor
 
 std::string playerName;
 
-typedef std::unique_ptr<Actor> ActorPtr;
+typedef std::shared_ptr<Actor> ActorPtr;
+typedef std::weak_ptr<Actor> WeakActorPtr;
 typedef std::list<ActorPtr> ActorList;
 
 ActorList actors;
-
-/* Search for actors by name. */
-ActorList::iterator find_player();
+WeakActorPtr wplayer;
 
 // Used by render() and move_monst().
 std::unique_ptr<TCODMap> fov; // Field of vision.
@@ -54,7 +53,10 @@ std::unique_ptr<TCODDijkstra> playerDistance;
  * Run mapgen.
  * Initialize grid and actors with mapgen output.
  */
-void generate_map();
+void generate_grid();
+
+/* Update fov and playerDistance. */
+void update_map( const Vec& pos );
 
 /* Exit gracefully. */
 void die( const char* fmt, ... );
@@ -106,7 +108,7 @@ ActorList::iterator actor_at( const Vec& pos )
 
 int main()
 {
-    generate_map();
+    generate_grid();
 
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
     TCODConsole::root->setDefaultBackground( TCODColor::black );
@@ -149,7 +151,7 @@ int main()
     }
 }
 
-void generate_map()
+void generate_grid()
 {
     FILE* mapgen = popen( "./mapgen/c++/mapgen", "r" );
 
@@ -169,6 +171,7 @@ void generate_map()
         std::copy_n( line, grid.width, grid.row_begin(y) );
     }
 
+    // Read spawn points.
     char spawnpt[50];
     while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
         if( spawnpt[0] != 'X' )
@@ -176,23 +179,33 @@ void generate_map()
 
         unsigned int x, y;
         sscanf( spawnpt, "X %u %u", &x, &y );
-        Vec pos = { x, y };
-        std::string name;
+
+        ActorPtr actor( new Actor ); 
+        actor->pos = Vec(x,y);
+        actor->hp  = 20;
 
         if( not actors.size() ) {
             // First actor! Initialize as the player.
             playerName = "player";
-            name = playerName;
+            actor->name = playerName;
+            wplayer = actor;
         } else {
-            name = "monst";
+            actor->name = "monst";
         }
 
-        actors.push_back( ActorPtr(new Actor{name,pos,20}) );
+        actors.push_back( actor );
     }
+
     if( actors.size() == 0 )
         die( "No spawn point!" );
 
     pclose( mapgen );
+}
+
+void update_map( const Vec& pos )
+{
+    fov->computeFov( pos.x(), pos.y(), 10, true, FOV_PERMISSIVE_4 );
+    playerDistance->compute( pos.x(), pos.y() );
 }
 
 Action move_player( Actor& player )
@@ -232,26 +245,18 @@ Action move_player( Actor& player )
             player.pos = pos;
 
             /*
-             * move_monst() requires an up-to-date Dijkstra map. It might make
-             * more sense to do this in render(), but that may not be called
-             * before move_most needs it.
+             * move_monst requires an up-to-date Dijkstra map. We do this in
+             * render too, but that may not be called before move_most needs
+             * it.
              */
-            fov->computeFov( pos.x(), pos.y(), 0, true, FOV_PERMISSIVE_4 );
-            playerDistance->compute( pos.x(), pos.y() );
+            update_map( pos );
+
             return MOVE;
         }
     }
 
     // The player has not yet moved (or we would have returned already).
     return move_player( player );
-}
-
-ActorList::iterator find_player()
-{
-    return pure::find_if (
-        [&](const ActorPtr& aptr) -> bool { return aptr->name == playerName; },
-        actors
-    );
 }
 
 Action move_monst( Actor& monst )
@@ -266,10 +271,10 @@ Action move_monst( Actor& monst )
     playerDistance->reverse();
     
     if( playerDistance->size() <= 1 ) {
-        auto actorIter = find_player();
-        if( actorIter == std::end(actors) )
+        ActorPtr player = wplayer.lock();
+        if( not player )
             return WAIT;
-        (*actorIter)->hp -= 10;
+        player->hp -= 10;
         return ATTACK;
     } else {
         playerDistance->walk( &x, &y );
@@ -290,6 +295,10 @@ void render()
             }
 
         playerDistance.reset( new TCODDijkstra(fov.get()) );
+
+        ActorPtr player = wplayer.lock();
+        if( player )
+            update_map( player->pos );
     }
 
     TCODConsole::root->clear();
