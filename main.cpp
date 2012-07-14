@@ -138,6 +138,10 @@ int main()
         {
             Actor& actor = *actorptr;
 
+            if( actor.hp <= 0 )
+                // Dead man standing! Will be cleaned up by next render().
+                continue;
+
             Action act;
 
             if( actor.name != playerName )
