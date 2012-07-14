@@ -6,6 +6,11 @@
 #include <iterator>
 #include <array>
 
+#ifdef __clang__
+// GCC allows all the fallowing functions to be considered constexpr, clang
+// does not.
+#define constexpr 
+#endif
 
 #include <iostream>
 template< typename Container >
