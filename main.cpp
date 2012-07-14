@@ -115,22 +115,17 @@ int main()
     TCODConsole::root->setDefaultForeground( TCODColor::white );
     TCODConsole::disableKeyboardRepeat();
 
-    bool playerAlive = true;
-    while( playerAlive and not TCODConsole::isWindowClosed() ) 
+    while( not TCODConsole::isWindowClosed() ) 
     {
         // Remove all dead.
         actors = pure::filter ( 
-            [&](const ActorPtr& aptr) -> bool 
-            { 
-                if( aptr->hp > 0 )
-                    return true;
-
-                if( aptr->name == playerName )
-                    playerAlive = false;
-                return false;; 
-            },
+            [&](const ActorPtr& aptr) -> bool { return aptr->hp > 0; },
             std::move( actors )
         );
+
+        ActorPtr player = wplayer.lock();
+        if( not player )
+            break;
 
         render();
 
@@ -140,7 +135,7 @@ int main()
 
             Action act;
 
-            if( actor.name != playerName )
+            if( actorptr != player )
                 act = move_monst( actor );
             else
                 act = move_player( actor );
