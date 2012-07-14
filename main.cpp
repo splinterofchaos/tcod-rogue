@@ -153,6 +153,9 @@ int main()
                 return 0;
         }
     }
+
+    if( not playerAlive )
+        printf( "You have died. Have a nice day.\n" );
 }
 
 void generate_grid()
