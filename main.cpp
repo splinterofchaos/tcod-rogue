@@ -330,7 +330,8 @@ void render()
 
             TCODConsole::root->setChar( x, y, t.c );
 
-            using C = TCODColor;
+            typedef TCODColor C;
+
             C fg = C::white;
             C bg = C::black;
             if( t.c == '#' ) {

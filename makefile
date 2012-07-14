@@ -1,7 +1,7 @@
 
 CC = g++ -std=c++0x
 
-LDFLAGS = -Llibtcod -ltcod{,xx} 
+LDFLAGS = -Llibtcod -ltcod -ltcodxx
 CFLAGS = -Ilibtcod/include -Wall
 
 obj = .grid.o .random.o
