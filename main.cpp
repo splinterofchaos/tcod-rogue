@@ -34,6 +34,7 @@ struct Stats
 {
     int hp;
     int strength;
+    int agility;
     int dexterity;
 };
 
@@ -58,9 +59,9 @@ bool operator == ( const std::string& name, const Race& r )
 { return r == name; }
 
 std::vector< Race > races = {
-    { "human",  '@', TCODColor(200,150, 50), {25, 10, 10} },
-    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20} },
-    { "bear",   'B', TCODColor(250,250,100), {30, 20,  5} }
+    { "human",  '@', TCODColor(200,150, 50), {25, 10, 15, 10} },
+    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20, 20} },
+    { "bear",   'B', TCODColor(250,250,100), {30, 20, 10,  5} }
 };
 
 struct Actor
@@ -137,6 +138,7 @@ struct Action
     }
 };
 
+/* Handle keyboard input on player's turn. */
 Action move_player( Actor& );
 
 /*
@@ -145,6 +147,15 @@ Action move_player( Actor& );
  * Otherwise, sit tight.
  */
 Action move_monst( Actor& );
+
+enum AttackResult {
+    MISSED   = 0,
+    HIT      = 1,
+    KILLED   = 2,
+    CRITICAL = 4
+};
+
+AttackResult attack( const Actor&, Actor& );
 
 ActorList::iterator actor_at( const Vec& pos )
 {
@@ -221,11 +232,16 @@ int main()
             {
                 // Walk to act.pos or attack what's there.
                 auto actorIter = actor_at( act.pos );
-                if( actorIter != std::end(actors) ) {
-                    (*actorIter)->hp -= 10;
-                    if( (*actorIter)->hp < 1 )
+                if( actorIter != std::end(actors) ) 
+                {
+                    AttackResult result = attack( actor, *(*actorIter) );
+                    if( result == AttackResult::KILLED )
                         actors.erase( actorIter );
-                } else {
+                    else if( result == AttackResult::HIT )
+                        ;
+                } 
+                else
+                {
                     actor.pos = act.pos;
                     if( actorptr == player )
                         update_map( player->pos );
@@ -349,6 +365,31 @@ Action move_monst( Actor& monst )
     Vec pos;
     playerDistance->walk( &pos.x(), &pos.y() );
     return Action( Action::MOVE, pos );
+}
+
+AttackResult attack( const Actor& aggressor, Actor& victim )
+{
+    AttackResult ar = MISSED;
+
+    const Stats& as = aggressor.stats;
+    const Stats& vs = victim.stats;
+    
+    // Hit chance!
+    if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
+        int dmg = random( as.strength/2, as.strength+1 );
+
+        if( dmg >= as.strength ) {
+            dmg *= 1.5f;
+            ar = AttackResult( ar | CRITICAL );
+        }
+
+        victim.hp -= dmg;
+        if( victim.hp < 1 )
+            return AttackResult( ar | KILLED );
+        return AttackResult( ar | HIT );
+    }
+
+    return ar;
 }
 
 void render()
