@@ -81,12 +81,24 @@ void render();
 /* True if the tile at pos blocks movement. */
 bool blocked( const Vec& pos );
 
-enum Action
+struct Action
 {
-    MOVE,
-    WAIT,
-    ATTACK,
-    QUIT
+    enum Type {
+        MOVE,
+        WAIT,
+        ATTACK,
+        QUIT
+    } type;
+
+    // If type=MOVE/ATTACK, holds the destination.
+    Vec pos;
+
+    Action() : type(WAIT) {} 
+
+    Action( Type type, Vec pos=Vec(0,0) )
+        : type( type ), pos( pos )
+    {
+    }
 };
 
 Action move_player( Actor& );
@@ -104,6 +116,11 @@ ActorList::iterator actor_at( const Vec& pos )
         [&](const ActorPtr& aptr) { return aptr->pos == pos; },
         actors
     );
+}
+
+bool walkable( const Vec& pos )
+{
+    return grid.get( pos ).c == '.';
 }
 
 int main()
@@ -143,12 +160,6 @@ int main()
 
     while( not TCODConsole::isWindowClosed() ) 
     {
-        // Remove all dead.
-        actors = pure::filter ( 
-            [&](const ActorPtr& aptr) -> bool { return aptr->hp > 0; },
-            std::move( actors )
-        );
-
         ActorPtr player = wplayer.lock();
         if( not player )
             break;
@@ -170,7 +181,22 @@ int main()
             else
                 act = move_player( actor );
 
-            if( act == QUIT )
+            if( act.type == Action::MOVE and walkable(act.pos) ) 
+            {
+                // Walk to act.pos or attack what's there.
+                auto actorIter = actor_at( act.pos );
+                if( actorIter != std::end(actors) ) {
+                    (*actorIter)->hp -= 10;
+                    if( (*actorIter)->hp < 1 )
+                        actors.erase( actorIter );
+                } else {
+                    actor.pos = act.pos;
+                    if( actorptr == player )
+                        update_map( player->pos );
+                }
+            }
+
+            if( act.type == Action::QUIT )
                 return 0;
         }
     }
@@ -241,7 +267,7 @@ Action move_player( Actor& player )
 
     Vec pos( 0, 0 );
     switch( next_pressed_key() ) {
-      case 'q': return QUIT;
+      case 'q': return Action::QUIT;
 
       // Cardinal directions.
       case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
@@ -255,32 +281,13 @@ Action move_player( Actor& player )
       case 'b': case '1': pos = Vec(-1,+1); break;
       case 'n': case '3': pos = Vec(+1,+1); break;
 
-      case '.': case '5': return WAIT;
+      case '.': case '5': return Action::WAIT;
 
       default: turnOver = false;
     }
 
-    pos += player.pos;
-    if( pos.x() and pos.y() ) {
-        auto actorIter = actor_at( pos );
-        if( actorIter != std::end(actors) ) {
-            (*actorIter)->hp -= 10;
-            return ATTACK;
-        }
-        
-        if( grid.get(pos).c != '#' ) {
-            player.pos = pos;
-
-            /*
-             * move_monst requires an up-to-date Dijkstra map. We do this in
-             * render too, but that may not be called before move_most needs
-             * it.
-             */
-            update_map( pos );
-
-            return MOVE;
-        }
-    }
+    if( pos.x() or pos.y() )
+        return Action( Action::MOVE, pos + player.pos );
 
     // The player has not yet moved (or we would have returned already).
     return move_player( player );
@@ -292,21 +299,14 @@ Action move_monst( Actor& monst )
     int& y = monst.pos.y();
 
     if( not fov->isInFov(x, y) )
-        return WAIT;
+        return Action( Action::WAIT );
 
     playerDistance->setPath( x, y );
     playerDistance->reverse();
-    
-    if( playerDistance->size() <= 1 ) {
-        ActorPtr player = wplayer.lock();
-        if( not player )
-            return WAIT;
-        player->hp -= 10;
-        return ATTACK;
-    } else {
-        playerDistance->walk( &x, &y );
-        return MOVE;
-    }
+
+    Vec pos;
+    playerDistance->walk( &pos.x(), &pos.y() );
+    return Action( Action::MOVE, pos );
 }
 
 void render()
