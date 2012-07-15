@@ -2,7 +2,7 @@
 CC = g++ -std=c++0x
 
 LDFLAGS = -Llibtcod -ltcod -ltcodxx
-CFLAGS = -Ilibtcod/include -Wall
+CFLAGS = -Ilibtcod/include -Wall -Wextra
 
 obj = .grid.o .random.o
 

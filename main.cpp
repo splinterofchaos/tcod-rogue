@@ -106,20 +106,28 @@ ActorList::iterator actor_at( const Vec& pos )
     );
 }
 
-std::list< std::string > messages;
-
-void new_message( const std::string& fmt, ... )
+// Data for a message like "you step on some grass" or "you hit it".
+struct Message
 {
-    va_list vl;
-    va_start( vl, fmt );
-    
-    char** msg;
-    vasprintf( msg, fmt.c_str(), vl );
-    messages.push_front( *msg );
-    free( msg );
+    static const int DURATION = 4;
+    std::string msg;
+    int duration; // How many times this message should be printed.
+    Message( std::string msg ) 
+        : msg( std::move(msg) ), duration( DURATION ) 
+    { 
+    }
+    Message( Message&& other ) 
+        : msg( std::move(other.msg) ), duration( other.duration ) 
+    { 
+    }
+};
 
-    va_end( vl );
-}
+std::list< Message > messages;
+
+/* Put new message into messages. */
+void new_message( const char* fmt, ... )
+    __attribute__ ((format (printf, 1, 2)));
+
 
 int main()
 {
@@ -298,6 +306,10 @@ Action move_player( Actor& player )
 
             return MOVE;
         }
+
+        new_message( "You cannot move there." );
+        // Give the player a chance to see it.
+        render();
     }
 
     // The player has not yet moved (or we would have returned already).
@@ -414,16 +426,22 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
-    TCODConsole msgCons( 40, 5 );
     int y = 0;
-    for( const std::string& str : messages )
-        msgCons.print( 0, y++, str.c_str() );
-    TCODConsole::blit ( 
-        &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
-        TCODConsole::root, 1, 1, 
-        1.f, 0.5f 
-    );
-    messages.clear();
+    for( Message& msg : messages ) {
+        if( not msg.duration )
+            break;
+
+        static TCODConsole msgCons( 40, 1 );
+        msgCons.clear();
+
+        msgCons.print( 0, 0, msg.msg.c_str() );
+
+        TCODConsole::blit ( 
+            &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
+            TCODConsole::root, 1, y++, 
+            float(msg.duration--)/Message::DURATION, 0.5f 
+        );
+    }
 
     TCODConsole::flush();
 }
@@ -467,6 +485,21 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
+void new_message( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+    
+    char* msg;
+    vasprintf( &msg, fmt, vl );
+    if( msg ) {
+        messages.push_front( Message(msg) );
+        free( msg );
+    }
+
+    va_end( vl );
+}
+
 void die( const char* fmt, ... )
 {
     va_list vl;
