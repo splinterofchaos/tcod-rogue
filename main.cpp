@@ -106,6 +106,21 @@ ActorList::iterator actor_at( const Vec& pos )
     );
 }
 
+std::list< std::string > messages;
+
+void new_message( const std::string& fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+    
+    char** msg;
+    vasprintf( msg, fmt.c_str(), vl );
+    messages.push_front( *msg );
+    free( msg );
+
+    va_end( vl );
+}
+
 int main()
 {
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
@@ -140,6 +155,9 @@ int main()
     }
 
     generate_grid();
+
+
+    new_message( "%s has entered the game.", playerName.c_str() );
 
     while( not TCODConsole::isWindowClosed() ) 
     {
@@ -395,6 +413,17 @@ void render()
         //TCODColor c( 255.f, vitality, vitality );
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
+
+    TCODConsole msgCons( 40, 5 );
+    int y = 0;
+    for( const std::string& str : messages )
+        msgCons.print( 0, y++, str.c_str() );
+    TCODConsole::blit ( 
+        &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
+        TCODConsole::root, 1, 1, 
+        1.f, 0.5f 
+    );
+    messages.clear();
 
     TCODConsole::flush();
 }
