@@ -170,6 +170,28 @@ bool walkable( const Vec& pos )
     return grid.get( pos ).c == '.';
 }
 
+// Data for a message like "you step on some grass" or "you hit it".
+struct Message
+{
+    static const int DURATION = 4;
+    std::string msg;
+    int duration; // How many times this message should be printed.
+    Message( std::string msg ) 
+        : msg( std::move(msg) ), duration( DURATION ) 
+    { 
+    }
+    Message( Message&& other ) 
+        : msg( std::move(other.msg) ), duration( other.duration ) 
+    { 
+    }
+};
+
+std::list< Message > messages;
+
+/* Put new message into messages. */
+void new_message( const char* fmt, ... )
+    __attribute__ ((format (printf, 1, 2)));
+
 int main()
 {
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
@@ -204,6 +226,9 @@ int main()
     }
 
     generate_grid();
+
+
+    new_message( "%s has entered the game.", playerName.c_str() );
 
     while( not TCODConsole::isWindowClosed() ) 
     {
@@ -247,6 +272,9 @@ int main()
                         update_map( player->pos );
                 }
             }
+
+            if( act.type == Action::MOVE and not walkable(act.pos) )
+                new_message( "You cannot move there." );
 
             if( act.type == Action::QUIT )
                 return 0;
@@ -487,6 +515,23 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
+    int y = 0;
+    for( Message& msg : messages ) {
+        if( not msg.duration )
+            break;
+
+        static TCODConsole msgCons( 40, 1 );
+        msgCons.clear();
+
+        msgCons.print( 0, 0, msg.msg.c_str() );
+
+        TCODConsole::blit ( 
+            &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
+            TCODConsole::root, 1, y++, 
+            float(msg.duration--)/Message::DURATION, 0.5f 
+        );
+    }
+
     TCODConsole::flush();
 }
 
@@ -529,6 +574,21 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
+void new_message( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+    
+    char* msg;
+    vasprintf( &msg, fmt, vl );
+    if( msg ) {
+        messages.push_front( Message(msg) );
+        free( msg );
+    }
+
+    va_end( vl );
+}
+
 void die( const char* fmt, ... )
 {
     va_list vl;
