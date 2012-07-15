@@ -4,6 +4,7 @@
 #include "Vector.h"
 #include "Pure.h"
 #include "Grid.h"
+#include "random.h"
 
 #include <cstdlib>
 #include <cstdio>
@@ -29,10 +30,45 @@ struct Tile
 
 Grid<Tile> grid( 80, 60, '#' );
 
+struct Stats
+{
+    int hp;
+    int strength;
+    int dexterity;
+};
+
+struct Race
+{
+    const char* const name;
+    char symbol; // Race's image.
+    TCODColor color;
+    Stats stats;
+};   
+
+/* 
+ * Racial equality!
+ * Assume that two different races have different names and two races with the
+ * same name have the same attributes.
+ */
+bool operator == ( const Race& r1, const Race& r2 )
+{ return r1.name == r2.name; }
+bool operator == ( const Race& r, const std::string& name )
+{ return r.name == name; }
+bool operator == ( const std::string& name, const Race& r )
+{ return r == name; }
+
+std::vector< Race > races = {
+    { "human",  '@', TCODColor(200,150, 50), {25, 10, 10} },
+    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20} },
+    { "bear",   'B', TCODColor(250,250,100), {30, 20,  5} }
+};
+
 struct Actor
 {
     std::string name;
+    std::string race;
     Vec pos;
+    Stats stats;
     int hp;
 };
 
@@ -205,20 +241,26 @@ void generate_grid()
         if( spawnpt[0] != 'X' )
             continue;
 
-        unsigned int x, y;
-        sscanf( spawnpt, "X %u %u", &x, &y );
-
         ActorPtr actor( new Actor ); 
-        actor->pos = Vec(x,y);
-        actor->hp  = 20;
+        sscanf( spawnpt, "X %u %u", &actor->pos.x(), &actor->pos.y() );
 
         if( not actors.size() ) {
             // First actor! Initialize as the player.
             actor->name = playerName;
+            actor->race = "human";
             wplayer = actor;
         } else {
             actor->name = "monst";
+            actor->race = races[ random(0, races.size()-1) ].name;
         }
+
+        auto raceIter = pure::find( actor->race, races );
+        if( raceIter == std::end(races) )
+            // This should never happen, but if it does...
+            raceIter = std::begin( races );
+        
+        actor->stats = raceIter->stats;
+        actor->hp    = actor->stats.hp;
 
         actors.push_back( actor );
     }
@@ -382,13 +424,21 @@ void render()
 
     for( auto& actorIter : actors ) {
 
-        Vec& pos = actorIter->pos;
-
+        const Vec& pos = actorIter->pos;
         if( not grid.get(pos).visible )
             continue;
 
-        TCODConsole::root->setChar( pos.x(), pos.y(), '@' );
-        TCODConsole::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
+        int symbol = 'X';
+        TCODColor color = TCODColor::white;
+
+        auto raceIter = pure::find( actorIter->race, races );
+        if( raceIter != std::end(races) ) {
+            symbol = raceIter->symbol;
+            color = raceIter->color;
+        }
+
+        TCODConsole::root->setChar( pos.x(), pos.y(), symbol );
+        TCODConsole::root->setCharForeground( pos.x(), pos.y(), color );
 
         // Draw background as a function of vitality.
         //float vitality = 20.f / actorIter->hp * (255/20.f);

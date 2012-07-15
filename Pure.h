@@ -83,8 +83,8 @@ constexpr Container filter( const F& f, Container cont )
 }
 
 template< typename Container, typename T >
-constexpr typename Container::iterator find( const T& value, 
-                                             Container&& cont )
+constexpr auto find( const T& value, Container&& cont )
+    -> decltype( std::begin(cont) )
 {
     return std::find( std::begin(cont), std::end(cont), value );
 }
