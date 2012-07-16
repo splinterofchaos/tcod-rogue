@@ -191,7 +191,7 @@ struct Message
 
 std::list< Message > messages;
 
-/* Put new message into messages. */
+/* Put new message into messages and stdout. */
 void new_message( Message::Type type, const char* fmt, ... )
     __attribute__ ((format (printf, 2, 3)));
 
@@ -526,10 +526,14 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
-    int y = 1;
-    for( Message& msg : messages ) {
-        if( not msg.duration )
+    int y = 0;
+    for( auto it=std::begin(messages); it!=std::end(messages); it++ )
+    {
+        Message& msg = *it;
+        if( not msg.duration ) {
+            messages.erase( it, std::end(messages) );
             break;
+        }
 
         TCODColor fg, bg;
         if( msg.type == Message::SPECIAL ) {
@@ -608,6 +612,7 @@ void new_message( Message::Type type, const char* fmt, ... )
     vasprintf( &msg, fmt, vl );
     if( msg ) {
         messages.push_front( Message(msg,type) );
+        printf( "%s\n", msg );
         free( msg );
     }
 
