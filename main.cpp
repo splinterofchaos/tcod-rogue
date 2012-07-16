@@ -116,8 +116,6 @@ int main()
     // A little intro screen. Just asks for the player's name.
     while( true )
     {
-        TCODConsole::root->clear();
-
         TCODConsole::root->setAlignment( TCOD_CENTER );
         TCODConsole::root->print( 40, 5, "Welcome to this WIP roguelike. " );
         TCODConsole::root->print( 40, 10, "You may notice sone hitches," );
@@ -127,13 +125,24 @@ int main()
         TCODConsole::root->print( 30, 23, playerName.c_str() );
 
         TCODConsole::root->flush();
+        TCODConsole::root->clear();
 
         TCOD_key_t key;
         do key = TCODConsole::waitForKeypress( true );
         while( not key.pressed );
 
-        if( key.vk == TCODK_ENTER )
-          break;
+        if( key.vk == TCODK_ENTER ) {
+            // Don't leave without a name, 
+            // but don't add the newline char to playerName either.
+            if( playerName.size() > 0 ) 
+                break;
+            else {
+                TCODConsole::root->print ( 
+                    30, 25, "Your name must be at least one character long." 
+                );
+                continue;
+            }
+        }
 
         if( key.c )
             playerName.push_back( key.c );
