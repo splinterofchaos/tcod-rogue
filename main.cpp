@@ -4,6 +4,7 @@
 #include "Vector.h"
 #include "Pure.h"
 #include "Grid.h"
+#include "random.h"
 
 #include <cstdlib>
 #include <cstdio>
@@ -29,10 +30,46 @@ struct Tile
 
 Grid<Tile> grid( 80, 60, '#' );
 
+struct Stats
+{
+    int hp;
+    int strength;
+    int agility;
+    int dexterity;
+};
+
+struct Race
+{
+    const char* const name;
+    char symbol; // Race's image.
+    TCODColor color;
+    Stats stats;
+};   
+
+/* 
+ * Racial equality!
+ * Assume that two different races have different names and two races with the
+ * same name have the same attributes.
+ */
+bool operator == ( const Race& r1, const Race& r2 )
+{ return r1.name == r2.name; }
+bool operator == ( const Race& r, const std::string& name )
+{ return r.name == name; }
+bool operator == ( const std::string& name, const Race& r )
+{ return r == name; }
+
+std::vector< Race > races = {
+    { "human",  '@', TCODColor(200,150, 50), {25, 10, 15, 10} },
+    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20, 20} },
+    { "bear",   'B', TCODColor(250,250,100), {30, 20, 10,  5} }
+};
+
 struct Actor
 {
     std::string name;
+    std::string race;
     Vec pos;
+    Stats stats;
     int hp;
 };
 
@@ -81,14 +118,27 @@ void render();
 /* True if the tile at pos blocks movement. */
 bool blocked( const Vec& pos );
 
-enum Action
+struct Action
 {
-    MOVE,
-    WAIT,
-    ATTACK,
-    QUIT
+    enum Type {
+        MOVE,
+        WAIT,
+        ATTACK,
+        QUIT
+    } type;
+
+    // If type=MOVE/ATTACK, holds the destination.
+    Vec pos;
+
+    Action() : type(WAIT) {} 
+
+    Action( Type type, Vec pos=Vec(0,0) )
+        : type( type ), pos( pos )
+    {
+    }
 };
 
+/* Handle keyboard input on player's turn. */
 Action move_player( Actor& );
 
 /*
@@ -98,6 +148,9 @@ Action move_player( Actor& );
  */
 Action move_monst( Actor& );
 
+/* Simulate attack and print a message. Return true on kill. */ 
+bool attack( const Actor& aggressor, Actor& victim );
+
 ActorList::iterator actor_at( const Vec& pos )
 {
     return pure::find_if ( 
@@ -105,6 +158,33 @@ ActorList::iterator actor_at( const Vec& pos )
         actors
     );
 }
+
+bool walkable( const Vec& pos )
+{
+    return grid.get( pos ).c == '.';
+}
+
+// Data for a message like "you step on some grass" or "you hit it".
+struct Message
+{
+    static const int DURATION = 4;
+    std::string msg;
+    int duration; // How many times this message should be printed.
+    Message( std::string msg ) 
+        : msg( std::move(msg) ), duration( DURATION ) 
+    { 
+    }
+    Message( Message&& other ) 
+        : msg( std::move(other.msg) ), duration( other.duration ) 
+    { 
+    }
+};
+
+std::list< Message > messages;
+
+/* Put new message into messages. */
+void new_message( const char* fmt, ... )
+    __attribute__ ((format (printf, 1, 2)));
 
 int main()
 {
@@ -150,14 +230,11 @@ int main()
 
     generate_grid();
 
+
+    new_message( "%s has entered the game.", playerName.c_str() );
+
     while( not TCODConsole::isWindowClosed() ) 
     {
-        // Remove all dead.
-        actors = pure::filter ( 
-            [&](const ActorPtr& aptr) -> bool { return aptr->hp > 0; },
-            std::move( actors )
-        );
-
         ActorPtr player = wplayer.lock();
         if( not player )
             break;
@@ -179,7 +256,27 @@ int main()
             else
                 act = move_player( actor );
 
-            if( act == QUIT )
+            if( act.type == Action::MOVE and walkable(act.pos) ) 
+            {
+                // Walk to act.pos or attack what's there.
+                auto targetIter = actor_at( act.pos );
+                if( targetIter != std::end(actors) ) 
+                {
+                    if(  attack(actor, *(*targetIter)) )
+                        actors.erase( targetIter );
+                } 
+                else
+                {
+                    actor.pos = act.pos;
+                    if( actorptr == player )
+                        update_map( player->pos );
+                }
+            }
+
+            if( act.type == Action::MOVE and not walkable(act.pos) )
+                new_message( "You cannot move there." );
+
+            if( act.type == Action::QUIT )
                 return 0;
         }
     }
@@ -214,20 +311,26 @@ void generate_grid()
         if( spawnpt[0] != 'X' )
             continue;
 
-        unsigned int x, y;
-        sscanf( spawnpt, "X %u %u", &x, &y );
-
         ActorPtr actor( new Actor ); 
-        actor->pos = Vec(x,y);
-        actor->hp  = 20;
+        sscanf( spawnpt, "X %u %u", &actor->pos.x(), &actor->pos.y() );
 
         if( not actors.size() ) {
             // First actor! Initialize as the player.
             actor->name = playerName;
+            actor->race = "human";
             wplayer = actor;
         } else {
             actor->name = "monst";
+            actor->race = races[ random(0, races.size()-1) ].name;
         }
+
+        auto raceIter = pure::find( actor->race, races );
+        if( raceIter == std::end(races) )
+            // This should never happen, but if it does...
+            raceIter = std::begin( races );
+        
+        actor->stats = raceIter->stats;
+        actor->hp    = actor->stats.hp;
 
         actors.push_back( actor );
     }
@@ -250,7 +353,7 @@ Action move_player( Actor& player )
 
     Vec pos( 0, 0 );
     switch( next_pressed_key() ) {
-      case 'q': return QUIT;
+      case 'q': return Action::QUIT;
 
       // Cardinal directions.
       case 'h': case '4': case TCODK_LEFT:  pos.x() -= 1; break;
@@ -264,32 +367,13 @@ Action move_player( Actor& player )
       case 'b': case '1': pos = Vec(-1,+1); break;
       case 'n': case '3': pos = Vec(+1,+1); break;
 
-      case '.': case '5': return WAIT;
+      case '.': case '5': return Action::WAIT;
 
       default: turnOver = false;
     }
 
-    pos += player.pos;
-    if( pos.x() and pos.y() ) {
-        auto actorIter = actor_at( pos );
-        if( actorIter != std::end(actors) ) {
-            (*actorIter)->hp -= 10;
-            return ATTACK;
-        }
-        
-        if( grid.get(pos).c != '#' ) {
-            player.pos = pos;
-
-            /*
-             * move_monst requires an up-to-date Dijkstra map. We do this in
-             * render too, but that may not be called before move_most needs
-             * it.
-             */
-            update_map( pos );
-
-            return MOVE;
-        }
-    }
+    if( pos.x() or pos.y() )
+        return Action( Action::MOVE, pos + player.pos );
 
     // The player has not yet moved (or we would have returned already).
     return move_player( player );
@@ -301,21 +385,47 @@ Action move_monst( Actor& monst )
     int& y = monst.pos.y();
 
     if( not fov->isInFov(x, y) )
-        return WAIT;
+        return Action( Action::WAIT );
 
     playerDistance->setPath( x, y );
     playerDistance->reverse();
+
+    Vec pos;
+    playerDistance->walk( &pos.x(), &pos.y() );
+    return Action( Action::MOVE, pos );
+}
+
+bool attack( const Actor& aggressor, Actor& victim )
+{
+    const Stats& as = aggressor.stats;
+    const Stats& vs = victim.stats;
+
+    const char* verb = "missed"; // hit, killed, missed, etc.
+    bool criticalHit = false;
     
-    if( playerDistance->size() <= 1 ) {
-        ActorPtr player = wplayer.lock();
-        if( not player )
-            return WAIT;
-        player->hp -= 10;
-        return ATTACK;
-    } else {
-        playerDistance->walk( &x, &y );
-        return MOVE;
+    // Hit chance!
+    if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
+        int dmg = random( as.strength/2, as.strength+1 );
+        verb = "hit";
+
+        if( dmg >= as.strength ) {
+            dmg *= 1.5f;
+            verb = "critically hit";
+            criticalHit = true;
+        }
+
+        victim.hp -= dmg;
+        if( victim.hp < 1 )
+            verb = "killed";
     }
+
+    new_message (
+        "%s %s %s%c", 
+        aggressor.name.c_str(), verb, victim.name.c_str(),
+        criticalHit ? '!' : '.' 
+    );
+
+    return verb == "killed";
 }
 
 void render()
@@ -391,18 +501,43 @@ void render()
 
     for( auto& actorIter : actors ) {
 
-        Vec& pos = actorIter->pos;
-
+        const Vec& pos = actorIter->pos;
         if( not grid.get(pos).visible )
             continue;
 
-        TCODConsole::root->setChar( pos.x(), pos.y(), '@' );
-        TCODConsole::root->setCharForeground( pos.x(), pos.y(), TCODColor::white );
+        int symbol = 'X';
+        TCODColor color = TCODColor::white;
+
+        auto raceIter = pure::find( actorIter->race, races );
+        if( raceIter != std::end(races) ) {
+            symbol = raceIter->symbol;
+            color = raceIter->color;
+        }
+
+        TCODConsole::root->setChar( pos.x(), pos.y(), symbol );
+        TCODConsole::root->setCharForeground( pos.x(), pos.y(), color );
 
         // Draw background as a function of vitality.
         //float vitality = 20.f / actorIter->hp * (255/20.f);
         //TCODColor c( 255.f, vitality, vitality );
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
+    }
+
+    int y = 0;
+    for( Message& msg : messages ) {
+        if( not msg.duration )
+            break;
+
+        static TCODConsole msgCons( 40, 1 );
+        msgCons.clear();
+
+        msgCons.print( 0, 0, msg.msg.c_str() );
+
+        TCODConsole::blit ( 
+            &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
+            TCODConsole::root, 1, y++, 
+            float(msg.duration--)/Message::DURATION, 0.5f 
+        );
     }
 
     TCODConsole::flush();
@@ -447,6 +582,21 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
+void new_message( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+    
+    char* msg;
+    vasprintf( &msg, fmt, vl );
+    if( msg ) {
+        messages.push_front( Message(msg) );
+        free( msg );
+    }
+
+    va_end( vl );
+}
+
 void die( const char* fmt, ... )
 {
     va_list vl;
