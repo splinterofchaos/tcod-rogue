@@ -190,7 +190,7 @@ int main()
 
 void generate_grid()
 {
-    FILE* mapgen = popen( "./mapgen/c++/mapgen", "r" );
+    FILE* mapgen = popen( "./mapgen/c++/mapgen -n 5 -X 15", "r" );
 
     // Read the map in, line by line.
     for( unsigned int y=0; y < grid.height; y++ ) {
