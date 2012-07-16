@@ -332,8 +332,8 @@ void generate_grid()
             actor->race = "human";
             wplayer = actor;
         } else {
-            actor->name = "monst";
             actor->race = races[ random(0, races.size()-1) ].name;
+            actor->name = "the " + actor->race;
         }
 
         auto raceIter = pure::find( actor->race, races );
