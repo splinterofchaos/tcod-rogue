@@ -52,10 +52,10 @@ struct RoomIterator  : public std::iterator< std::bidirectional_iterator_tag, T>
     iterator& operator++() 
     { 
         cur += 1;
-        size_t dif = cur - base;
-        if( dif >= width ) {
+        size_t diff = cur - base;
+        if( diff >= width ) {
             base += offset;
-            cur = base + (dif - width);
+            cur = base + (diff - width);
         }
 
         return *this; 
@@ -121,7 +121,7 @@ struct Grid
     size_t width, height;
 
     Grid() : tiles(0), width(0), height(0) {}
-    Grid( size_t w, size_t h, const Tile& t=Tile() )
+    Grid( size_t w, size_t h, const Tile& t )
         : tiles(new Tile[ w * h ]), width(w), height(h)
     { std::fill_n( tiles, area(), t ); }
 
@@ -168,22 +168,22 @@ struct Grid
     room_iterator reg_begin( const Room& r )
     {
         return room_iterator( &get(r.left, r.up), 
-                                width, r.right - r.left );
+                                width, r.right-r.left+1 );
     }
     room_iterator reg_end( const Room& r )
     {
         return room_iterator( &get(r.left, r.down+1), 
-                                width, r.right-r.left );
+                                width, r.right-r.left+1 );
     }
     const_room_iterator reg_begin( const Room& r ) const
     {
         return const_room_iterator( &get(r.left, r.up), 
-                                      width, r.right - r.left );
+                                      width, r.right-r.left+1 );
     }
     const_room_iterator reg_end( const Room& r ) const
     {
         return const_room_iterator( &get(r.left, r.down+1), 
-                                      width, r.right-r.left );
+                                      width, r.right-r.left+1 );
     }
 
     iterator begin() { return tiles; }
