@@ -148,14 +148,8 @@ Action move_player( Actor& );
  */
 Action move_monst( Actor& );
 
-enum AttackResult {
-    MISSED   = 0,
-    HIT      = 1,
-    KILLED   = 2,
-    CRITICAL = 4
-};
-
-AttackResult attack( const Actor&, Actor& );
+/* Simulate attack and print a message. Return true on kill. */ 
+bool attack( const Actor& aggressor, Actor& victim );
 
 ActorList::iterator actor_at( const Vec& pos )
 {
@@ -173,15 +167,24 @@ bool walkable( const Vec& pos )
 // Data for a message like "you step on some grass" or "you hit it".
 struct Message
 {
+    enum Type {
+        NORMAL,
+        SPECIAL,
+        COMBAT
+    };
+
     static const int DURATION = 4;
     std::string msg;
     int duration; // How many times this message should be printed.
-    Message( std::string msg ) 
-        : msg( std::move(msg) ), duration( DURATION ) 
+    Type type;
+
+    Message( std::string msg, Type type ) 
+        : msg( std::move(msg) ), duration( DURATION ), type( type )
     { 
     }
-    Message( Message&& other ) 
-        : msg( std::move(other.msg) ), duration( other.duration ) 
+    Message( Message&& other, Type type ) 
+        : msg( std::move(other.msg) ), duration( other.duration ),
+          type( type )
     { 
     }
 };
@@ -189,8 +192,8 @@ struct Message
 std::list< Message > messages;
 
 /* Put new message into messages. */
-void new_message( const char* fmt, ... )
-    __attribute__ ((format (printf, 1, 2)));
+void new_message( Message::Type type, const char* fmt, ... )
+    __attribute__ ((format (printf, 2, 3)));
 
 int main()
 {
@@ -225,10 +228,13 @@ int main()
             playerName.push_back( key.c );
     }
 
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+
     generate_grid();
 
 
-    new_message( "%s has entered the game.", playerName.c_str() );
+    new_message( Message::SPECIAL, "%s has entered the game.", 
+                 playerName.c_str() );
 
     while( not TCODConsole::isWindowClosed() ) 
     {
@@ -256,14 +262,11 @@ int main()
             if( act.type == Action::MOVE and walkable(act.pos) ) 
             {
                 // Walk to act.pos or attack what's there.
-                auto actorIter = actor_at( act.pos );
-                if( actorIter != std::end(actors) ) 
+                auto targetIter = actor_at( act.pos );
+                if( targetIter != std::end(actors) ) 
                 {
-                    AttackResult result = attack( actor, *(*actorIter) );
-                    if( result == AttackResult::KILLED )
-                        actors.erase( actorIter );
-                    else if( result == AttackResult::HIT )
-                        ;
+                    if(  attack(actor, *(*targetIter)) )
+                        actors.erase( targetIter );
                 } 
                 else
                 {
@@ -274,7 +277,7 @@ int main()
             }
 
             if( act.type == Action::MOVE and not walkable(act.pos) )
-                new_message( "You cannot move there." );
+                new_message( Message::NORMAL, "You cannot move there." );
 
             if( act.type == Action::QUIT )
                 return 0;
@@ -395,29 +398,37 @@ Action move_monst( Actor& monst )
     return Action( Action::MOVE, pos );
 }
 
-AttackResult attack( const Actor& aggressor, Actor& victim )
+bool attack( const Actor& aggressor, Actor& victim )
 {
-    AttackResult ar = MISSED;
-
     const Stats& as = aggressor.stats;
     const Stats& vs = victim.stats;
+
+    const char* verb = "missed"; // hit, killed, missed, etc.
+    bool criticalHit = false;
     
     // Hit chance!
     if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
         int dmg = random( as.strength/2, as.strength+1 );
+        verb = "hit";
 
         if( dmg >= as.strength ) {
             dmg *= 1.5f;
-            ar = AttackResult( ar | CRITICAL );
+            verb = "critically hit";
+            criticalHit = true;
         }
 
         victim.hp -= dmg;
         if( victim.hp < 1 )
-            return AttackResult( ar | KILLED );
-        return AttackResult( ar | HIT );
+            verb = "killed";
     }
 
-    return ar;
+    new_message (
+        Message::COMBAT, "%s %s %s%c", 
+        aggressor.name.c_str(), verb, victim.name.c_str(),
+        criticalHit ? '!' : '.' 
+    );
+
+    return verb == "killed";
 }
 
 void render()
@@ -515,20 +526,34 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
-    int y = 0;
+    int y = 1;
     for( Message& msg : messages ) {
         if( not msg.duration )
             break;
 
+        TCODColor fg, bg;
+        if( msg.type == Message::SPECIAL ) {
+            fg = TCODColor::lightestYellow;
+            bg = TCODColor::black;
+        } else if( msg.type == Message::COMBAT ) {
+            fg = TCODColor::lightestFlame;
+            bg = TCODColor::desaturatedYellow;
+        } else /* msg.type == NORMAL */ { 
+            fg = TCODColor::white;
+            bg = TCODColor::black;
+        }
+
         static TCODConsole msgCons( 40, 1 );
         msgCons.clear();
-
+        msgCons.setDefaultForeground( fg );
+        msgCons.setDefaultBackground( bg );
         msgCons.print( 0, 0, msg.msg.c_str() );
 
+        float alpha = float(msg.duration--) / Message::DURATION;
         TCODConsole::blit ( 
             &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
             TCODConsole::root, 1, y++, 
-            float(msg.duration--)/Message::DURATION, 0.5f 
+            alpha, alpha
         );
     }
 
@@ -574,7 +599,7 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
-void new_message( const char* fmt, ... )
+void new_message( Message::Type type, const char* fmt, ... )
 {
     va_list vl;
     va_start( vl, fmt );
@@ -582,7 +607,7 @@ void new_message( const char* fmt, ... )
     char* msg;
     vasprintf( &msg, fmt, vl );
     if( msg ) {
-        messages.push_front( Message(msg) );
+        messages.push_front( Message(msg,type) );
         free( msg );
     }
 
