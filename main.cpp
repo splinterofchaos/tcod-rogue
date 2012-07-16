@@ -148,14 +148,8 @@ Action move_player( Actor& );
  */
 Action move_monst( Actor& );
 
-enum AttackResult {
-    MISSED   = 0,
-    HIT      = 1,
-    KILLED   = 2,
-    CRITICAL = 4
-};
-
-AttackResult attack( const Actor&, Actor& );
+/* Simulate attack and print a message. Return true on kill. */ 
+bool attack( const Actor& aggressor, Actor& victim );
 
 ActorList::iterator actor_at( const Vec& pos )
 {
@@ -256,14 +250,11 @@ int main()
             if( act.type == Action::MOVE and walkable(act.pos) ) 
             {
                 // Walk to act.pos or attack what's there.
-                auto actorIter = actor_at( act.pos );
-                if( actorIter != std::end(actors) ) 
+                auto targetIter = actor_at( act.pos );
+                if( targetIter != std::end(actors) ) 
                 {
-                    AttackResult result = attack( actor, *(*actorIter) );
-                    if( result == AttackResult::KILLED )
-                        actors.erase( actorIter );
-                    else if( result == AttackResult::HIT )
-                        ;
+                    if(  attack(actor, *(*targetIter)) )
+                        actors.erase( targetIter );
                 } 
                 else
                 {
@@ -395,29 +386,37 @@ Action move_monst( Actor& monst )
     return Action( Action::MOVE, pos );
 }
 
-AttackResult attack( const Actor& aggressor, Actor& victim )
+bool attack( const Actor& aggressor, Actor& victim )
 {
-    AttackResult ar = MISSED;
-
     const Stats& as = aggressor.stats;
     const Stats& vs = victim.stats;
+
+    const char* verb = "missed"; // hit, killed, missed, etc.
+    bool criticalHit = false;
     
     // Hit chance!
     if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
         int dmg = random( as.strength/2, as.strength+1 );
+        verb = "hit";
 
         if( dmg >= as.strength ) {
             dmg *= 1.5f;
-            ar = AttackResult( ar | CRITICAL );
+            verb = "critically hit";
+            criticalHit = true;
         }
 
         victim.hp -= dmg;
         if( victim.hp < 1 )
-            return AttackResult( ar | KILLED );
-        return AttackResult( ar | HIT );
+            verb = "killed";
     }
 
-    return ar;
+    new_message (
+        "%s %s %s%c", 
+        aggressor.name.c_str(), verb, victim.name.c_str(),
+        criticalHit ? '!' : '.' 
+    );
+
+    return verb == "killed";
 }
 
 void render()
