@@ -450,6 +450,8 @@ void render()
             update_map( player->pos );
     }
 
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+    TCODConsole::root->setDefaultBackground( TCODColor::black );
     TCODConsole::root->clear();
 
     // Draw onto root.
@@ -526,7 +528,9 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
+    // Print messages.
     int y = 0;
+    TCODConsole::root->setAlignment( TCOD_LEFT );
     for( auto it=std::begin(messages); it!=std::end(messages); it++ )
     {
         Message& msg = *it;
@@ -559,6 +563,29 @@ void render()
             TCODConsole::root, 1, y++, 
             alpha, alpha
         );
+    }
+
+    // Print a health bar.
+    ActorPtr player = wplayer.lock();
+    if( player ) {
+        int y = grid.height - 1; // y-position of health bar.
+
+        TCODConsole::root->setDefaultBackground( TCODColor::red );
+        TCODConsole::root->setDefaultForeground( TCODColor::white );
+        int width = (float(player->hp)/player->stats.hp) * (grid.width/2);
+        TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
+
+        const char* healthFmt = width > sizeof "xx / xx" ? 
+            "%u / %u" : "%u/%u";
+        char* healthInfo;
+        asprintf( &healthInfo, healthFmt, player->hp, player->stats.hp );
+        if( healthInfo ) {
+            TCOD_alignment_t allignment = strlen(healthInfo) < width ?
+                TCOD_CENTER : TCOD_LEFT;
+            TCODConsole::root->setAlignment( allignment );
+            TCODConsole::root->print( width/2, y, healthInfo );
+            free( healthInfo );
+        }
     }
 
     TCODConsole::flush();
