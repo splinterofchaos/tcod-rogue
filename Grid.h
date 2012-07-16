@@ -96,8 +96,8 @@ struct Room
 {
     static const int MINLEN;
 
-    size_t left, right, up, down;
-    Room(size_t l, size_t r, size_t u, size_t d);
+    unsigned int left, right, up, down;
+    Room(unsigned l, unsigned r, unsigned u, unsigned d);
     Room( const Room& other );
     Room() {}
 };

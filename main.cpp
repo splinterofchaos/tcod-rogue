@@ -361,8 +361,6 @@ void update_map( const Vec& pos )
 
 Action move_player( Actor& player )
 {
-    bool turnOver = true;
-
     Vec pos( 0, 0 );
     switch( next_pressed_key() ) {
       case 'q': return Action::QUIT;
@@ -381,7 +379,7 @@ Action move_player( Actor& player )
 
       case '.': case '5': return Action::WAIT;
 
-      default: turnOver = false;
+      default: ;
     }
 
     if( pos.x() or pos.y() )
@@ -412,23 +410,28 @@ bool attack( const Actor& aggressor, Actor& victim )
     const Stats& as = aggressor.stats;
     const Stats& vs = victim.stats;
 
-    const char* verb = "missed"; // hit, killed, missed, etc.
+    const char* const HIT    = "hit";
+    const char* const KILLED = "killed";
+    const char* const MISSED = "missed";
+    const char* const CRITICAL = "critically hit";
+
+    const char* verb = MISSED;
     bool criticalHit = false;
     
     // Hit chance!
     if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
         int dmg = random( as.strength/2, as.strength+1 );
-        verb = "hit";
+        verb = HIT;
 
         if( dmg >= as.strength ) {
             dmg *= 1.5f;
-            verb = "critically hit";
+            verb = CRITICAL;
             criticalHit = true;
         }
 
         victim.hp -= dmg;
         if( victim.hp < 1 )
-            verb = "killed";
+            verb = KILLED;
     }
 
     new_message (
@@ -437,13 +440,13 @@ bool attack( const Actor& aggressor, Actor& victim )
         criticalHit ? '!' : '.' 
     );
 
-    return verb == "killed";
+    return verb == KILLED;
 }
 
 void render()
 {
-    if( not fov or fov->getWidth()  != grid.width 
-                or fov->getHeight() != grid.height ) 
+    if( not fov or fov->getWidth()  != (int)grid.width 
+                or fov->getHeight() != (int)grid.height ) 
     {
         fov.reset( new TCODMap(grid.width, grid.height) );
         for( unsigned int x=0; x < grid.width; x++ )
@@ -581,7 +584,8 @@ void render()
 
         TCODConsole::root->setDefaultBackground( TCODColor::red );
         TCODConsole::root->setDefaultForeground( TCODColor::white );
-        int width = (float(player->hp)/player->stats.hp) * (grid.width/2);
+        unsigned int width = 
+            (float(player->hp)/player->stats.hp) * (grid.width/2);
         TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
@@ -621,7 +625,7 @@ int next_pressed_key()
     do key = TCODConsole::waitForKeypress(false);
     while( not key.pressed );
 
-    int k = key.vk == TCODK_CHAR ? key.c : key.vk;
+    int k = key.vk == TCODK_CHAR ? key.c : (int)key.vk;
 
     if( k >= TCODK_0 and k <= TCODK_9 )
         k = '0' + (k - TCODK_0);
