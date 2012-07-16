@@ -167,24 +167,33 @@ bool walkable( const Vec& pos )
 // Data for a message like "you step on some grass" or "you hit it".
 struct Message
 {
+    enum Type {
+        NORMAL,
+        SPECIAL,
+        COMBAT
+    };
+
     static const int DURATION = 4;
     std::string msg;
     int duration; // How many times this message should be printed.
-    Message( std::string msg ) 
-        : msg( std::move(msg) ), duration( DURATION ) 
+    Type type;
+
+    Message( std::string msg, Type type ) 
+        : msg( std::move(msg) ), duration( DURATION ), type( type )
     { 
     }
-    Message( Message&& other ) 
-        : msg( std::move(other.msg) ), duration( other.duration ) 
+    Message( Message&& other, Type type ) 
+        : msg( std::move(other.msg) ), duration( other.duration ),
+          type( type )
     { 
     }
 };
 
 std::list< Message > messages;
 
-/* Put new message into messages. */
-void new_message( const char* fmt, ... )
-    __attribute__ ((format (printf, 1, 2)));
+/* Put new message into messages and stdout. */
+void new_message( Message::Type type, const char* fmt, ... )
+    __attribute__ ((format (printf, 2, 3)));
 
 int main()
 {
@@ -228,10 +237,13 @@ int main()
             playerName.push_back( key.c );
     }
 
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+
     generate_grid();
 
 
-    new_message( "%s has entered the game.", playerName.c_str() );
+    new_message( Message::SPECIAL, "%s has entered the game.", 
+                 playerName.c_str() );
 
     while( not TCODConsole::isWindowClosed() ) 
     {
@@ -274,7 +286,7 @@ int main()
             }
 
             if( act.type == Action::MOVE and not walkable(act.pos) )
-                new_message( "You cannot move there." );
+                new_message( Message::NORMAL, "You cannot move there." );
 
             if( act.type == Action::QUIT )
                 return 0;
@@ -420,7 +432,7 @@ bool attack( const Actor& aggressor, Actor& victim )
     }
 
     new_message (
-        "%s %s %s%c", 
+        Message::COMBAT, "%s %s %s%c", 
         aggressor.name.c_str(), verb, victim.name.c_str(),
         criticalHit ? '!' : '.' 
     );
@@ -447,6 +459,8 @@ void render()
             update_map( player->pos );
     }
 
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+    TCODConsole::root->setDefaultBackground( TCODColor::black );
     TCODConsole::root->clear();
 
     // Draw onto root.
@@ -523,21 +537,64 @@ void render()
         //TCODConsole::root->setCharBackground( pos.x(), pos.y(), c );
     }
 
+    // Print messages.
     int y = 0;
-    for( Message& msg : messages ) {
-        if( not msg.duration )
+    TCODConsole::root->setAlignment( TCOD_LEFT );
+    for( auto it=std::begin(messages); it!=std::end(messages); it++ )
+    {
+        Message& msg = *it;
+        if( not msg.duration ) {
+            messages.erase( it, std::end(messages) );
             break;
+        }
+
+        TCODColor fg, bg;
+        if( msg.type == Message::SPECIAL ) {
+            fg = TCODColor::lightestYellow;
+            bg = TCODColor::black;
+        } else if( msg.type == Message::COMBAT ) {
+            fg = TCODColor::lightestFlame;
+            bg = TCODColor::desaturatedYellow;
+        } else /* msg.type == NORMAL */ { 
+            fg = TCODColor::white;
+            bg = TCODColor::black;
+        }
 
         static TCODConsole msgCons( 40, 1 );
         msgCons.clear();
-
+        msgCons.setDefaultForeground( fg );
+        msgCons.setDefaultBackground( bg );
         msgCons.print( 0, 0, msg.msg.c_str() );
 
+        float alpha = float(msg.duration--) / Message::DURATION;
         TCODConsole::blit ( 
             &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
             TCODConsole::root, 1, y++, 
-            float(msg.duration--)/Message::DURATION, 0.5f 
+            alpha, alpha
         );
+    }
+
+    // Print a health bar.
+    ActorPtr player = wplayer.lock();
+    if( player ) {
+        int y = grid.height - 1; // y-position of health bar.
+
+        TCODConsole::root->setDefaultBackground( TCODColor::red );
+        TCODConsole::root->setDefaultForeground( TCODColor::white );
+        int width = (float(player->hp)/player->stats.hp) * (grid.width/2);
+        TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
+
+        const char* healthFmt = width > sizeof "xx / xx" ? 
+            "%u / %u" : "%u/%u";
+        char* healthInfo;
+        asprintf( &healthInfo, healthFmt, player->hp, player->stats.hp );
+        if( healthInfo ) {
+            TCOD_alignment_t allignment = strlen(healthInfo) < width ?
+                TCOD_CENTER : TCOD_LEFT;
+            TCODConsole::root->setAlignment( allignment );
+            TCODConsole::root->print( width/2, y, healthInfo );
+            free( healthInfo );
+        }
     }
 
     TCODConsole::flush();
@@ -582,7 +639,7 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
-void new_message( const char* fmt, ... )
+void new_message( Message::Type type, const char* fmt, ... )
 {
     va_list vl;
     va_start( vl, fmt );
@@ -590,7 +647,8 @@ void new_message( const char* fmt, ... )
     char* msg;
     vasprintf( &msg, fmt, vl );
     if( msg ) {
-        messages.push_front( Message(msg) );
+        messages.push_front( Message(msg,type) );
+        printf( "%s\n", msg );
         free( msg );
     }
 
