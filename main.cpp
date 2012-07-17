@@ -549,9 +549,9 @@ void render()
         }
 
         static TCODConsole msgCons( 40, 1 );
-        msgCons.clear();
         msgCons.setDefaultForeground( msg.fg );
         msgCons.setDefaultBackground( msg.bg );
+        msgCons.clear();
         msgCons.print( 0, 0, msg.msg.c_str() );
         msgCons.flush();
 
