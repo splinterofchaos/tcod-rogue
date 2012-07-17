@@ -30,13 +30,35 @@ struct Tile
 
 Grid<Tile> grid( 80, 60, '#' );
 
-struct Stats
-{
-    int hp;
-    int strength;
-    int agility;
-    int dexterity;
+enum StatType {
+    HP,
+    STRENGTH,
+    AGILITY,
+    DEXTERITY,
+    N_STATS
 };
+
+typedef std::array<int,N_STATS> Stats;
+
+Stats operator+( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::plus<int>(), a, b ); }
+Stats operator-( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::minus<int>(), a, b ); }
+Stats operator*( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::multiplies<int>(), a, b ); }
+Stats operator/( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::divides<int>(), a, b ); }
+
+namespace stats
+{
+    // The base stats added to everything.
+    Stats base = { 10, 10, 10, 10 };
+
+    // Racial stats.
+    Stats human  = Stats{ 10,  5,  5,  0 } + base;
+    Stats kobold = Stats{  0, -3, 10, 10 } + base;
+    Stats bear   = Stats{ 20, 10,  0, -5 } + base;
+}
 
 struct Race
 {
@@ -59,9 +81,9 @@ bool operator == ( const std::string& name, const Race& r )
 { return r == name; }
 
 std::vector< Race > races = {
-    { "human",  '@', TCODColor(200,150, 50), {25, 10, 15, 10} },
-    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20, 20} },
-    { "bear",   'B', TCODColor(250,250,100), {30, 20, 10,  5} }
+    { "human",  '@', TCODColor(200,150, 50), stats::human  },
+    { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
+    { "bear",   'B', TCODColor(250,250,100), stats::bear   }
 };
 
 struct Actor
@@ -321,7 +343,7 @@ void generate_grid()
             raceIter = std::begin( races );
         
         actor->stats = raceIter->stats;
-        actor->hp    = actor->stats.hp;
+        actor->hp    = actor->stats[HP];
 
         actors.push_back( actor );
     }
@@ -395,11 +417,11 @@ bool attack( const Actor& aggressor, Actor& victim )
     bool criticalHit = false;
     
     // Hit chance!
-    if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
-        int dmg = random( as.strength/2, as.strength+1 );
+    if( random(5, as[AGILITY]+vs[DEXTERITY]) > vs[DEXTERITY] ) { 
+        int dmg = random( as[STRENGTH]/2, as[STRENGTH]+1 );
         verb = "hit";
 
-        if( dmg >= as.strength ) {
+        if( dmg >= as[STRENGTH] ) {
             dmg *= 1.5f;
             verb = "critically hit";
             criticalHit = true;

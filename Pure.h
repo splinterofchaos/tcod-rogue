@@ -114,6 +114,14 @@ void for_each( const F& f, const Container& cont )
     std::for_each( std::begin(cont), std::end(cont), f );
 }
 
+template< typename Container, typename F >
+Container zip_with( const F& f, Container a, const Container& b )
+{
+    std::transform( std::begin(a), std::end(a), std::begin(b), 
+                    std::begin(a), f );
+    return a;
+}
+
 template< typename X, typename F, typename ... Fs >
 constexpr std::array<X,sizeof...(Fs)+1> cleave( X x, const F& f, const Fs& ... fs ) 
 {
