@@ -35,6 +35,7 @@ enum StatType {
     STRENGTH,
     AGILITY,
     DEXTERITY,
+    ACCURACY,
     N_STATS
 };
 
@@ -52,12 +53,12 @@ Stats operator/( const Stats& a, const Stats& b )
 namespace stats
 {
     // The base stats added to everything.
-    Stats base = { 10, 10, 10, 10 };
+    Stats base = { 10, 10, 10, 10, 10 };
 
     // Racial stats.
-    Stats human  = Stats{ 10,  5,  5,  0 } + base;
-    Stats kobold = Stats{  0, -3, 10, 10 } + base;
-    Stats bear   = Stats{ 20, 10,  0, -5 } + base;
+    Stats human  = Stats{ 10,  5,  5,  0,  5 } + base;
+    Stats kobold = Stats{  0, -3, 10,  8,  5 } + base;
+    Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
 }
 
 struct Race
@@ -433,6 +434,7 @@ bool attack( const Actor& aggressor, Actor& victim )
     const Stats& vs = victim.stats;
 
     const char* const HIT    = "hit";
+    const char* const DODGED = "dodged";
     const char* const KILLED = "killed";
     const char* const MISSED = "missed";
     const char* const CRITICAL = "critically hit";
@@ -440,27 +442,46 @@ bool attack( const Actor& aggressor, Actor& victim )
     const char* verb = MISSED;
     bool criticalHit = false;
     
-    // Hit chance!
-    if( random(5, as[AGILITY]+vs[DEXTERITY]) > vs[DEXTERITY] ) { 
-        int dmg = random( as[STRENGTH]/2, as[STRENGTH]+1 );
-        verb = HIT;
-
-        if( dmg >= as[STRENGTH] ) {
-            dmg *= 1.5f;
-            verb = CRITICAL;
-            criticalHit = true;
-        }
-
-        victim.hp -= dmg;
-        if( victim.hp < 1 )
-            verb = KILLED;
+    // Victim can move out of the way before before aggressor attacks.
+    if( random(1, as[AGILITY]*as[ACCURACY]) < as[AGILITY]+as[DEXTERITY] ) 
+    { 
+        verb = MISSED;
     }
+    else
+    {
+        // Victim can dodge aggressor's attack.
+        if( random(1, vs[AGILITY]+vs[DEXTERITY]) > as[DEXTERITY] ) {
+            verb = DODGED;
+        } else {
+            verb = HIT;
 
-    new_message (
-        Message::COMBAT, "%s %s %s%c", 
-        aggressor.name.c_str(), verb, victim.name.c_str(),
-        criticalHit ? '!' : '.' 
-    );
+            int dmg = random( as[STRENGTH]/2, as[STRENGTH]+1 );
+            if( dmg >= as[STRENGTH] ) {
+                dmg *= 1.5f;
+                verb = CRITICAL;
+                criticalHit = true;
+            }
+
+            victim.hp -= dmg;
+            if( victim.hp < 1 )
+                verb = KILLED;
+        }
+    } 
+
+    if( verb != DODGED ) {
+        new_message (
+            Message::COMBAT, "%s %s %s%c", 
+            aggressor.name.c_str(), verb, victim.name.c_str(),
+            criticalHit ? '!' : '.' 
+        );
+    } else {
+        // "the aggressor dodged the victim" doesn't make sense, 
+        // so do something different for dodging.
+        new_message (
+            Message::COMBAT, "%s dodged %s's attack.", 
+            victim.name.c_str(), aggressor.name.c_str()
+        );
+    }
 
     return verb == KILLED;
 }
