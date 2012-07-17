@@ -176,15 +176,24 @@ struct Message
     static const int DURATION = 4;
     std::string msg;
     int duration; // How many times this message should be printed.
-    Type type;
+
+    TCODColor fg, bg;
 
     Message( std::string msg, Type type ) 
-        : msg( std::move(msg) ), duration( DURATION ), type( type )
+        : msg( std::move(msg) ), duration( DURATION )
     { 
+        typedef TCODColor C;
+        switch( type ) {
+          case SPECIAL: fg=C::lightestYellow; bg=C::black; break;
+          case COMBAT: fg=C::lightestFlame; bg=C::desaturatedYellow; break;
+
+          default:
+          case NORMAL: fg=C::white; bg=C::black; break;
+        }
     }
     Message( Message&& other, Type type ) 
-        : msg( std::move(other.msg) ), duration( other.duration ),
-          type( type )
+        : msg( std::move(other.msg) ), duration( other.duration ), 
+          fg( other.fg ), bg( other.bg )
     { 
     }
 };
@@ -539,23 +548,12 @@ void render()
             break;
         }
 
-        TCODColor fg, bg;
-        if( msg.type == Message::SPECIAL ) {
-            fg = TCODColor::lightestYellow;
-            bg = TCODColor::black;
-        } else if( msg.type == Message::COMBAT ) {
-            fg = TCODColor::lightestFlame;
-            bg = TCODColor::desaturatedYellow;
-        } else /* msg.type == NORMAL */ { 
-            fg = TCODColor::white;
-            bg = TCODColor::black;
-        }
-
         static TCODConsole msgCons( 40, 1 );
         msgCons.clear();
-        msgCons.setDefaultForeground( fg );
-        msgCons.setDefaultBackground( bg );
+        msgCons.setDefaultForeground( msg.fg );
+        msgCons.setDefaultBackground( msg.bg );
         msgCons.print( 0, 0, msg.msg.c_str() );
+        msgCons.flush();
 
         float alpha = float(msg.duration--) / Message::DURATION;
         TCODConsole::blit ( 
