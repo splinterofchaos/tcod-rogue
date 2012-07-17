@@ -5,7 +5,7 @@
 
 const int Room::MINLEN = 4;
 
-Room::Room(size_t l, size_t r, size_t u, size_t d)
+Room::Room(unsigned int l, unsigned int r, unsigned int u, unsigned int d)
 {
     left = l; right = r;
     up = u; down = d;
@@ -30,12 +30,6 @@ int _split_pos( int min, int max, int len )
     }
 
     return random( min, max );
-}
-
-
-static void print_area( Room r )
-{
-    printf( "<%d,%d,%d,%d>", r.left, r.right, r.up, r.down );
 }
 
 std::pair<Room,Room> hsplit( const Room& r, int len )
