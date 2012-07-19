@@ -208,6 +208,11 @@ struct Message
 
     TCODColor fg, bg;
 
+    static int width()
+    {
+        return grid.width / 2;
+    }
+
     Message( std::string msg, Type type ) 
         : msg( std::move(msg) ), duration( DURATION )
     { 
@@ -521,6 +526,8 @@ bool attack( const Actor& aggressor, Actor& victim )
 
 void render()
 {
+    ActorPtr player = wplayer.lock();
+
     if( not fov or fov->getWidth()  != (int)grid.width 
                 or fov->getHeight() != (int)grid.height ) 
     {
@@ -533,7 +540,6 @@ void render()
 
         playerDistance.reset( new TCODDijkstra(fov.get()) );
 
-        ActorPtr player = wplayer.lock();
         if( player )
             update_map( player->pos );
     }
@@ -627,23 +633,28 @@ void render()
             break;
         }
 
-        static TCODConsole msgCons( 40, 1 );
-        msgCons.setDefaultForeground( msg.fg );
-        msgCons.setDefaultBackground( msg.bg );
-        msgCons.clear();
-        msgCons.print( 0, 0, msg.msg.c_str() );
-        msgCons.flush();
+        const unsigned int SIZE = Message::width(); // Max size of message.
+        static std::unique_ptr<TCODConsole> msgCons( nullptr );
+        if( not msgCons or msgCons->getWidth() != SIZE )
+            msgCons.reset( new TCODConsole(SIZE,1) );
+
+        int xoff = player and player->pos.x() > SIZE ?  1 : SIZE;
+
+        msgCons->setDefaultForeground( msg.fg );
+        msgCons->setDefaultBackground( msg.bg );
+        msgCons->clear();
+        msgCons->print( 0, 0, msg.msg.c_str() );
+        msgCons->flush();
 
         float alpha = float(msg.duration--) / Message::DURATION;
         TCODConsole::blit ( 
-            &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
-            TCODConsole::root, 1, y++, 
+            msgCons.get(), 0, 0, SIZE, 1, 
+            TCODConsole::root, xoff, y++, 
             alpha, alpha
         );
     }
 
     // Print a health bar.
-    ActorPtr player = wplayer.lock();
     if( player ) {
         int y = grid.height - 1; // y-position of health bar.
 
