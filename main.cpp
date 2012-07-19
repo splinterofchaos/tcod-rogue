@@ -1,10 +1,13 @@
 
-#include "libtcod.hpp"
-
 #include "Vector.h"
 #include "Pure.h"
 #include "Grid.h"
 #include "random.h"
+#include "Message.h"
+
+#include "Rogue.h"
+
+#include "libtcod.hpp"
 
 #include <cstdlib>
 #include <cstdio>
@@ -13,20 +16,7 @@
 #include <list>
 #include <string>
 
-typedef Vector<int,2> Vec;
-
 Vec mapDims( 80, 60 );
-
-struct Tile
-{
-    bool seen, visible;
-    char c;
-
-    Tile() : seen(false), visible(false), c(' ') {}
-
-    // Allow implicit construction.
-    Tile( char c ) : seen(false), visible(false), c(c) {}
-};
 
 Grid<Tile> grid( 80, 60, '#' );
 
@@ -193,50 +183,6 @@ bool walkable( const Vec& pos )
     return grid.get( pos ).c == '.';
 }
 
-// Data for a message like "you step on some grass" or "you hit it".
-struct Message
-{
-    enum Type {
-        NORMAL,
-        SPECIAL,
-        COMBAT
-    };
-
-    static const int DURATION = 4;
-    std::string msg;
-    int duration; // How many times this message should be printed.
-
-    TCODColor fg, bg;
-
-    static int width()
-    {
-        return grid.width / 2;
-    }
-
-    Message( std::string msg, Type type ) 
-        : msg( std::move(msg) ), duration( DURATION )
-    { 
-        typedef TCODColor C;
-        switch( type ) {
-          case SPECIAL: fg=C::lightestYellow; bg=C::black; break;
-          case COMBAT: fg=C::lightestFlame; bg=C::desaturatedYellow; break;
-
-          default:
-          case NORMAL: fg=C::white; bg=C::black; break;
-        }
-    }
-    Message( Message&& other, Type type ) 
-        : msg( std::move(other.msg) ), duration( other.duration ), 
-          fg( other.fg ), bg( other.bg )
-    { 
-    }
-};
-
-std::list< Message > messages;
-
-/* Put new message into messages and stdout. */
-void new_message( Message::Type type, const char* fmt, ... )
-    __attribute__ ((format (printf, 2, 3)));
 
 int main()
 {
@@ -623,36 +569,30 @@ void render()
     }
 
     // Print messages.
-    int y = 0;
-    TCODConsole::root->setAlignment( TCOD_LEFT );
-    for( auto it=std::begin(messages); it!=std::end(messages); it++ )
-    {
-        Message& msg = *it;
-        if( not msg.duration ) {
-            messages.erase( it, std::end(messages) );
-            break;
-        }
-
-        const unsigned int SIZE = Message::width(); // Max size of message.
-        static std::unique_ptr<TCODConsole> msgCons( nullptr );
-        if( not msgCons or msgCons->getWidth() != SIZE )
-            msgCons.reset( new TCODConsole(SIZE,1) );
-
-        int xoff = player and player->pos.x() > SIZE ?  1 : SIZE;
-
-        msgCons->setDefaultForeground( msg.fg );
-        msgCons->setDefaultBackground( msg.bg );
-        msgCons->clear();
-        msgCons->print( 0, 0, msg.msg.c_str() );
-        msgCons->flush();
-
-        float alpha = float(msg.duration--) / Message::DURATION;
-        TCODConsole::blit ( 
-            msgCons.get(), 0, 0, SIZE, 1, 
-            TCODConsole::root, xoff, y++, 
-            alpha, alpha
-        );
+    const int SIZE = Message::width(); // Max size of message.
+    static std::unique_ptr<TCODConsole> msgCons( nullptr );
+    if( not msgCons or msgCons->getWidth() != SIZE ) {
+        msgCons.reset( new TCODConsole(SIZE,1) );
+        msgCons->setBackgroundFlag( TCOD_BKGND_SET );
     }
+
+    int y = 0;
+    int x = player and player->pos.x() > SIZE ?  1 : SIZE;
+    for_each_message (
+        [&]( const Message& msg )
+        {
+            msgCons->setDefaultForeground( msg.fg );
+            msgCons->setDefaultBackground( msg.bg );
+            msgCons->print( 0, 0, msg.str() );
+
+            float alpha = msg.alpha();
+            TCODConsole::blit ( 
+                msgCons.get(), 0, 0, msg.size(), 1, 
+                TCODConsole::root, x, y++, 
+                alpha, alpha
+            );
+        }
+    );
 
     // Print a health bar.
     if( player ) {
@@ -719,22 +659,6 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
-void new_message( Message::Type type, const char* fmt, ... )
-{
-    va_list vl;
-    va_start( vl, fmt );
-    
-    char* msg;
-    vasprintf( &msg, fmt, vl );
-    if( msg ) {
-        messages.push_front( Message(msg,type) );
-        printf( "%s\n", msg );
-        free( msg );
-    }
-
-    va_end( vl );
-}
-
 void die( const char* fmt, ... )
 {
     va_list vl;
