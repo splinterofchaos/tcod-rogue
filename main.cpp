@@ -94,6 +94,12 @@ struct Actor
     Vec pos;
     Stats stats;
     int hp;
+    int nextMove;
+
+    Actor()
+    {
+        nextMove = 0;
+    }
 };
 
 std::string playerName;
@@ -263,57 +269,75 @@ int main()
     TCODConsole::root->setDefaultForeground( TCODColor::white );
 
     generate_grid();
-
+    render();
 
     new_message( Message::SPECIAL, "%s has entered the game.", 
                  playerName.c_str() );
 
-    while( not TCODConsole::isWindowClosed() ) 
+    int time = 0;
+
+    while( actors.size() and not TCODConsole::isWindowClosed() )
     {
         ActorPtr player = wplayer.lock();
         if( not player )
             break;
 
-        render();
+        ActorList::iterator actoriter = pure::min (
+            [](const ActorPtr& a, const ActorPtr& b)
+            { return a->nextMove < b->nextMove; },
+            actors
+        );
 
-        for( ActorPtr& actorptr : actors )
+        ActorPtr& actorptr = *actoriter;
+        Actor& actor = *actorptr;
+
+        if( actor.hp <= 0 ) {
+            actors.erase( actoriter );
+            continue;
+        }
+
+        time = actor.nextMove;
+
+        Action act;
+        if( actorptr == player ) {
+            render();
+            act = move_player( actor );
+        } else {
+            act = move_monst( actor );
+        }
+
+        if( act.type == Action::MOVE and walkable(act.pos) ) 
         {
-            Actor& actor = *actorptr;
-
-            if( actor.hp <= 0 )
-                // Dead man standing! Will be cleaned up by next render().
-                continue;
-
-            Action act;
-
-            if( actorptr != player )
-                act = move_monst( actor );
-            else
-                act = move_player( actor );
-
-            if( act.type == Action::MOVE and walkable(act.pos) ) 
+            // Walk to act.pos or attack what's there.
+            auto targetiter = actor_at( act.pos );
+            if( targetiter != std::end(actors) ) 
             {
-                // Walk to act.pos or attack what's there.
-                auto targetIter = actor_at( act.pos );
-                if( targetIter != std::end(actors) ) 
-                {
-                    if(  attack(actor, *(*targetIter)) )
-                        actors.erase( targetIter );
-                } 
-                else
-                {
-                    actor.pos = act.pos;
-                    if( actorptr == player )
-                        update_map( player->pos );
-                }
+                if( attack(actor, *(*targetiter)) )
+                    actors.erase( targetiter );
+            } 
+            else
+            {
+                actor.pos = act.pos;
+                if( actorptr == player )
+                    update_map( player->pos );
             }
 
-            if( act.type == Action::MOVE and not walkable(act.pos) )
-                new_message( Message::NORMAL, "You cannot move there." );
-
-            if( act.type == Action::QUIT )
-                return 0;
+            actor.nextMove += 30 - actor.stats[AGILITY];
         }
+
+        if( act.type == Action::MOVE and not walkable(act.pos) 
+            and actorptr == player ) {
+            // Don't do this for an NPC. Could cause an infinite loop.
+            new_message( Message::NORMAL, "You cannot move there." );
+            continue;
+        }
+
+        if( act.type == Action::QUIT )
+            return 0;
+
+        if( actor.nextMove == time )
+            // Either did not move or decided to wait.
+            actor.nextMove += actor.stats[AGILITY]/2;
     }
 
     if( not wplayer.lock() )
