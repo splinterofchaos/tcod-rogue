@@ -255,7 +255,7 @@ int main()
         TCODConsole::root->clear();
 
         TCOD_key_t key;
-        do key = TCODConsole::waitForKeypress( true );
+        do key = TCODConsole::waitForKeypress( false );
         while( not key.pressed );
 
         if( key.vk == TCODK_ENTER ) {
