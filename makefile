@@ -23,3 +23,6 @@ libtcod :
 	mv Makefile libtcod
 	make -f libtcod/Makefile
 	make -f libtcod/Makefile install
+
+clean :
+	rm .*.o

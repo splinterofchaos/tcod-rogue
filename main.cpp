@@ -30,13 +30,36 @@ struct Tile
 
 Grid<Tile> grid( 80, 60, '#' );
 
-struct Stats
-{
-    int hp;
-    int strength;
-    int agility;
-    int dexterity;
+enum StatType {
+    HP,
+    STRENGTH,
+    AGILITY,
+    DEXTERITY,
+    ACCURACY,
+    N_STATS
 };
+
+typedef std::array<int,N_STATS> Stats;
+
+Stats operator+( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::plus<int>(), a, b ); }
+Stats operator-( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::minus<int>(), a, b ); }
+Stats operator*( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::multiplies<int>(), a, b ); }
+Stats operator/( const Stats& a, const Stats& b )
+{ return pure::zip_with( std::divides<int>(), a, b ); }
+
+namespace stats
+{
+    // The base stats added to everything.
+    Stats base = { 10, 10, 10, 10, 10 };
+
+    // Racial stats.
+    Stats human  = Stats{ 10,  5,  5,  0,  5 } + base;
+    Stats kobold = Stats{  0, -3, 10,  8,  5 } + base;
+    Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
+}
 
 struct Race
 {
@@ -59,9 +82,9 @@ bool operator == ( const std::string& name, const Race& r )
 { return r == name; }
 
 std::vector< Race > races = {
-    { "human",  '@', TCODColor(200,150, 50), {25, 10, 15, 10} },
-    { "kobold", 'K', TCODColor(100,200,100), {10,  5, 20, 20} },
-    { "bear",   'B', TCODColor(250,250,100), {30, 20, 10,  5} }
+    { "human",  '@', TCODColor(200,150, 50), stats::human  },
+    { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
+    { "bear",   'B', TCODColor(250,250,100), stats::bear   }
 };
 
 struct Actor
@@ -71,6 +94,12 @@ struct Actor
     Vec pos;
     Stats stats;
     int hp;
+    int nextMove;
+
+    Actor()
+    {
+        nextMove = 0;
+    }
 };
 
 std::string playerName;
@@ -249,57 +278,75 @@ int main()
     TCODConsole::root->setDefaultForeground( TCODColor::white );
 
     generate_grid();
-
+    render();
 
     new_message( Message::SPECIAL, "%s has entered the game.", 
                  playerName.c_str() );
 
-    while( not TCODConsole::isWindowClosed() ) 
+    int time = 0;
+
+    while( actors.size() and not TCODConsole::isWindowClosed() )
     {
         ActorPtr player = wplayer.lock();
         if( not player )
             break;
 
-        render();
+        ActorList::iterator actoriter = pure::min (
+            [](const ActorPtr& a, const ActorPtr& b)
+            { return a->nextMove < b->nextMove; },
+            actors
+        );
 
-        for( ActorPtr& actorptr : actors )
+        ActorPtr& actorptr = *actoriter;
+        Actor& actor = *actorptr;
+
+        if( actor.hp <= 0 ) {
+            actors.erase( actoriter );
+            continue;
+        }
+
+        time = actor.nextMove;
+
+        Action act;
+        if( actorptr == player ) {
+            render();
+            act = move_player( actor );
+        } else {
+            act = move_monst( actor );
+        }
+
+        if( act.type == Action::MOVE and walkable(act.pos) ) 
         {
-            Actor& actor = *actorptr;
-
-            if( actor.hp <= 0 )
-                // Dead man standing! Will be cleaned up by next render().
-                continue;
-
-            Action act;
-
-            if( actorptr != player )
-                act = move_monst( actor );
-            else
-                act = move_player( actor );
-
-            if( act.type == Action::MOVE and walkable(act.pos) ) 
+            // Walk to act.pos or attack what's there.
+            auto targetiter = actor_at( act.pos );
+            if( targetiter != std::end(actors) ) 
             {
-                // Walk to act.pos or attack what's there.
-                auto targetIter = actor_at( act.pos );
-                if( targetIter != std::end(actors) ) 
-                {
-                    if(  attack(actor, *(*targetIter)) )
-                        actors.erase( targetIter );
-                } 
-                else
-                {
-                    actor.pos = act.pos;
-                    if( actorptr == player )
-                        update_map( player->pos );
-                }
+                if( attack(actor, *(*targetiter)) )
+                    actors.erase( targetiter );
+            } 
+            else
+            {
+                actor.pos = act.pos;
+                if( actorptr == player )
+                    update_map( player->pos );
             }
 
-            if( act.type == Action::MOVE and not walkable(act.pos) )
-                new_message( Message::NORMAL, "You cannot move there." );
-
-            if( act.type == Action::QUIT )
-                return 0;
+            actor.nextMove += 30 - actor.stats[AGILITY];
         }
+
+        if( act.type == Action::MOVE and not walkable(act.pos) 
+            and actorptr == player ) {
+            // Don't do this for an NPC. Could cause an infinite loop.
+            new_message( Message::NORMAL, "You cannot move there." );
+            continue;
+        }
+
+        if( act.type == Action::QUIT )
+            return 0;
+
+        if( actor.nextMove == time )
+            // Either did not move or decided to wait.
+            actor.nextMove += actor.stats[AGILITY]/2;
     }
 
     if( not wplayer.lock() )
@@ -351,7 +398,7 @@ void generate_grid()
             raceIter = std::begin( races );
         
         actor->stats = raceIter->stats;
-        actor->hp    = actor->stats.hp;
+        actor->hp    = actor->stats[HP];
 
         actors.push_back( actor );
     }
@@ -420,6 +467,7 @@ bool attack( const Actor& aggressor, Actor& victim )
     const Stats& vs = victim.stats;
 
     const char* const HIT    = "hit";
+    const char* const DODGED = "dodged";
     const char* const KILLED = "killed";
     const char* const MISSED = "missed";
     const char* const CRITICAL = "critically hit";
@@ -427,27 +475,46 @@ bool attack( const Actor& aggressor, Actor& victim )
     const char* verb = MISSED;
     bool criticalHit = false;
     
-    // Hit chance!
-    if( random(5, as.agility+vs.dexterity) > vs.dexterity ) { 
-        int dmg = random( as.strength/2, as.strength+1 );
-        verb = HIT;
-
-        if( dmg >= as.strength ) {
-            dmg *= 1.5f;
-            verb = CRITICAL;
-            criticalHit = true;
-        }
-
-        victim.hp -= dmg;
-        if( victim.hp < 1 )
-            verb = KILLED;
+    // Victim can move out of the way before before aggressor attacks.
+    if( random(1, as[AGILITY]*as[ACCURACY]) < as[AGILITY]+as[DEXTERITY] ) 
+    { 
+        verb = MISSED;
     }
+    else
+    {
+        // Victim can dodge aggressor's attack.
+        if( random(1, vs[AGILITY]+vs[DEXTERITY]) > as[DEXTERITY] ) {
+            verb = DODGED;
+        } else {
+            verb = HIT;
 
-    new_message (
-        Message::COMBAT, "%s %s %s%c", 
-        aggressor.name.c_str(), verb, victim.name.c_str(),
-        criticalHit ? '!' : '.' 
-    );
+            int dmg = random( as[STRENGTH]/2, as[STRENGTH]+1 );
+            if( dmg >= as[STRENGTH] ) {
+                dmg *= 1.5f;
+                verb = CRITICAL;
+                criticalHit = true;
+            }
+
+            victim.hp -= dmg;
+            if( victim.hp < 1 )
+                verb = KILLED;
+        }
+    } 
+
+    if( verb != DODGED ) {
+        new_message (
+            Message::COMBAT, "%s %s %s%c", 
+            aggressor.name.c_str(), verb, victim.name.c_str(),
+            criticalHit ? '!' : '.' 
+        );
+    } else {
+        // "the aggressor dodged the victim" doesn't make sense, 
+        // so do something different for dodging.
+        new_message (
+            Message::COMBAT, "%s dodged %s's attack.", 
+            victim.name.c_str(), aggressor.name.c_str()
+        );
+    }
 
     return verb == KILLED;
 }
@@ -583,13 +650,13 @@ void render()
         TCODConsole::root->setDefaultBackground( TCODColor::red );
         TCODConsole::root->setDefaultForeground( TCODColor::white );
         unsigned int width = 
-            (float(player->hp)/player->stats.hp) * (grid.width/2);
+            (float(player->hp)/player->stats[HP]) * (grid.width/2);
         TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
         char* healthInfo;
-        asprintf( &healthInfo, healthFmt, player->hp, player->stats.hp );
+        asprintf( &healthInfo, healthFmt, player->hp, player->stats[HP] );
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
