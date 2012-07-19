@@ -146,5 +146,33 @@ constexpr std::vector<T> generate( F f, unsigned int n )
     return c;
 }
 
+template< class Cmp, class Container >
+constexpr auto max( const Cmp& cmp, Container&& cont )
+    -> decltype( std::begin(cont) )
+{
+    return std::max_element( std::begin(cont), std::end(cont), cmp );
+}
+
+template< class Container >
+constexpr auto max( Container&& cont )
+    -> decltype( std::begin(cont) )
+{
+    return std::max_element( std::begin(cont), std::end(cont) );
+}
+
+template< class Cmp, class Container >
+constexpr auto min( const Cmp& cmp, Container&& cont )
+    -> decltype( std::begin(cont) )
+{
+    return std::min_element( std::begin(cont), std::end(cont), cmp );
+}
+
+template< class Container >
+constexpr auto min( Container&& cont )
+    -> decltype( std::begin(cont) )
+{
+    return std::min_element( std::begin(cont), std::end(cont) );
+}
+
 } // namespace pure
 
