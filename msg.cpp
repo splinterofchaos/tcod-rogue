@@ -1,5 +1,5 @@
 
-#include "Message.h"
+#include "msg.h"
 #include "Rogue.h" // For grid.width in Message::width.
 #include <list>
 #include <cstdarg>
