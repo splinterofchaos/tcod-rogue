@@ -2,63 +2,65 @@
 #include "Message.h"
 #include "Rogue.h" // For grid.width in Message::width.
 #include <list>
-
-const int Message::DURATION = 4;
-
-std::list< Message > messageList;
-
-int Message::width()
-{
-    return grid.width / 2;
-}
-
-Message::Message( std::string msg, Type type )
-    : msg( std::move(msg) ), duration( DURATION )
-{ 
-    typedef TCODColor C;
-    switch( type ) {
-      case SPECIAL: fg=C::lightestYellow; bg=C::black; break;
-      case COMBAT: fg=C::lightestFlame; bg=C::desaturatedYellow; break;
-
-      default:
-      case NORMAL: fg=C::white; bg=C::black; break;
-    }
-}
-
-float Message::alpha() const
-{
-    // Called after print, which decrements duration.
-    return float(duration) / DURATION;
-}
-
-std::string::size_type Message::size() const
-{
-    return msg.size();
-}
-
-const char* Message::str() const
-{
-    return msg.c_str();
-}
-
 #include <cstdarg>
-void new_message( Message::Type type, const char* fmt, ... )
+
+namespace msg
 {
-    va_list vl;
-    va_start( vl, fmt );
-    
+
+const int DURATION = 4;
+
+struct Message
+{
+    std::string msg;
+    TCODColor fg, bg;
+    int duration; // How many times this message should be printed.
+};
+
+::std::list< Message > messageList;
+
+void _push_msg( const char* fmt, va_list vl, 
+                const TCODColor& fg, const TCODColor& bg )
+{
     char* msg;
-    vasprintf( &msg, fmt, vl );
-    if( msg ) {
-        messageList.push_front( Message(msg,type) );
+    if( vasprintf(&msg,fmt,vl) > 0 ) {
+        messageList.push_front ( {msg, fg, bg, DURATION} );
         printf( "%s\n", msg );
         free( msg );
     }
+}
 
+void combat( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+
+    _push_msg( fmt, vl, 
+               TCODColor::lightestFlame, TCODColor::desaturatedYellow );
+    
     va_end( vl );
 }
 
-void for_each_message( const std::function<void(const Message&)>& f )
+void special( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+
+    _push_msg( fmt, vl, TCODColor::lightestYellow, TCODColor::black );
+    
+    va_end( vl );
+}
+
+void normal( const char* fmt, ... )
+{
+    va_list vl;
+    va_start( vl, fmt );
+
+    _push_msg( fmt, vl, TCODColor::white, TCODColor::black );
+    
+    va_end( vl );
+}
+
+void for_each( const Fn& f )
 {
     typedef std::list<Message>::iterator I;
     for( I it = std::begin(messageList); it != std::end(messageList); it++ )
@@ -68,7 +70,9 @@ void for_each_message( const std::function<void(const Message&)>& f )
             break;
         }
 
-        f( *it );
+        f( it->msg, it->fg, it->bg, it->duration );
         it->duration--;
     }
 }
+
+} // namespace msg

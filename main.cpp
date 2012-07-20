@@ -231,8 +231,7 @@ int main()
     generate_grid();
     render();
 
-    new_message( Message::SPECIAL, "%s has entered the game.", 
-                 playerName.c_str() );
+    msg::special( "%s has entered the game.", playerName.c_str() );
 
     int time = 0;
 
@@ -288,7 +287,7 @@ int main()
         if( act.type == Action::MOVE and not walkable(act.pos) 
             and actorptr == player ) {
             // Don't do this for an NPC. Could cause an infinite loop.
-            new_message( Message::NORMAL, "You cannot move there." );
+            msg::normal( "You cannot move there." );
             continue;
         }
 
@@ -453,18 +452,14 @@ bool attack( const Actor& aggressor, Actor& victim )
     } 
 
     if( verb != DODGED ) {
-        new_message (
-            Message::COMBAT, "%s %s %s%c", 
-            aggressor.name.c_str(), verb, victim.name.c_str(),
-            criticalHit ? '!' : '.' 
-        );
+        msg::combat( "%s %s %s%c", 
+                     aggressor.name.c_str(), verb, victim.name.c_str(),
+                     criticalHit ? '!' : '.' );
     } else {
         // "the aggressor dodged the victim" doesn't make sense, 
         // so do something different for dodging.
-        new_message (
-            Message::COMBAT, "%s dodged %s's attack.", 
-            victim.name.c_str(), aggressor.name.c_str()
-        );
+        msg::combat( "%s dodged %s's attack.", 
+                     victim.name.c_str(), aggressor.name.c_str() );
     }
 
     return verb == KILLED;
@@ -569,7 +564,7 @@ void render()
     }
 
     // Print messages.
-    const int SIZE = Message::width(); // Max size of message.
+    const int SIZE = grid.width / 2; // Max size of message.
     static std::unique_ptr<TCODConsole> msgCons( nullptr );
     if( not msgCons or msgCons->getWidth() != SIZE ) {
         msgCons.reset( new TCODConsole(SIZE,1) );
@@ -578,14 +573,15 @@ void render()
 
     int y = 0;
     int x = player and player->pos.x() > SIZE ?  1 : SIZE;
-    for_each_message (
-        [&]( const Message& msg )
+    msg::for_each (
+        [&]( const std::string& msg, 
+             const TCODColor& fg, const TCODColor& bg, int duration )
         {
-            msgCons->setDefaultForeground( msg.fg );
-            msgCons->setDefaultBackground( msg.bg );
-            msgCons->print( 0, 0, msg.str() );
+            msgCons->setDefaultForeground( fg );
+            msgCons->setDefaultBackground( bg );
+            msgCons->print( 0, 0, msg.c_str() );
 
-            float alpha = msg.alpha();
+            float alpha = float(duration) / msg::DURATION;
             TCODConsole::blit ( 
                 msgCons.get(), 0, 0, msg.size(), 1, 
                 TCODConsole::root, x, y++, 

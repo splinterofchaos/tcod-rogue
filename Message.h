@@ -1,44 +1,28 @@
 
 #include <string>
+#include <functional>
 
 #include "libtcod.hpp"
 
-/*
- * Messages are managed internally in Messages.cpp. This defines the interface
- * for interacting with the internal message list.
- */
-
-struct Message
+namespace msg
 {
-    enum Type {
-        NORMAL,
-        SPECIAL,
-        COMBAT
-    };
 
-    static const int DURATION;
+extern const int DURATION; // How long a message will last.
 
-    std::string msg;
-    int duration; // How many times this message should be printed.
-    TCODColor fg, bg;
+/* 
+ * Message printing functions.
+ * Each function will result in a message of a different color.
+ */
+void combat(  const char* fmt, ... ) __attribute__((format (printf, 1, 2)));
+void special( const char* fmt, ... ) __attribute__((format (printf, 1, 2)));
+void normal(  const char* fmt, ... ) __attribute__((format (printf, 1, 2)));
 
-    /* The maximum size of msg. */
-    static int width();
+/* 
+ * For each message, do f and decrement the duration.
+ * Used to print each message to the screen.
+ */
+typedef std::function< void(const std::string&,
+                            const TCODColor&,const TCODColor&, int) > Fn; 
+void for_each( const Fn& f );
 
-    Message( std::string, Type );
-
-    float alpha() const;
-    std::string::size_type size() const;
-    const char* str() const;
-};
-
-/* Put new message into the internal log and stdout. */
-void new_message( Message::Type type, const char* fmt, ... )
-    __attribute__ ((format (printf, 2, 3)));
-
-/* Apply f to every message. */
-#include <functional>
-void for_each_message( const std::function<void(const Message&)>& f );
-
-/* Print a message to (0,0) on a console. */
-std::string::size_type print( TCODConsole&, Message*);
+}
