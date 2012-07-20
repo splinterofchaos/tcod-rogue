@@ -3,7 +3,7 @@
 #include "Pure.h"
 #include "Grid.h"
 #include "random.h"
-#include "Message.h"
+#include "msg.h"
 
 #include "Rogue.h"
 
