@@ -19,13 +19,18 @@ Vec mapDims( 80, 60 );
 
 struct Tile
 {
-    bool seen, visible;
+    bool seen      : 1;
+    bool visible   : 1;
+    bool highlight : 1; 
     char c;
 
-    Tile() : seen(false), visible(false), c(' ') {}
+    Tile() : c(' ') { init(); }
 
     // Allow implicit construction.
-    Tile( char c ) : seen(false), visible(false), c(c) {}
+    Tile( char c ) : c(c) { init(); }
+
+  private:
+    void init() { seen = visible = hilgiht = false; }
 };
 
 Grid<Tile> grid( 80, 60, '#' );
@@ -415,6 +420,42 @@ void update_map( const Vec& pos )
     playerDistance->compute( pos.x(), pos.y() );
 }
 
+void _look_loop( const Actor& player )
+{
+    Vec lpos = player.pos; // Look position.
+    while( true )
+    {
+        playerDistance->setPath( lpos.x(), lpos.y() );
+
+        Vec pos = lpos;
+        do {
+            grid.get(pos).hilgiht = true;
+            playerDistance->walk( &pos.x(), &pos.y() );
+        } while( playerDistance->size() > 0 );
+
+        // Loop terminates before highlighting player's position.
+        grid.get(player.pos).highlight = true;
+
+        render();
+
+        switch( next_pressed_key() ) {
+            // Cardinal directions.
+          case 'h': case '4': case TCODK_LEFT:  lpos.x() -= 1; break;
+          case 'l': case '6': case TCODK_RIGHT: lpos.x() += 1; break;
+          case 'k': case '8': case TCODK_UP:    lpos.y() -= 1; break;
+          case 'j': case '2': case TCODK_DOWN:  lpos.y() += 1; break;
+
+                                                // Diagonals.
+          case 'y': case '7': lpos += Vec(-1,-1); break;
+          case 'u': case '9': lpos += Vec(+1,-1); break;
+          case 'b': case '1': lpos += Vec(-1,+1); break;
+          case 'n': case '3': lpos += Vec(+1,+1); break;
+
+          default: return;
+        }
+    }
+}
+
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -434,6 +475,8 @@ Action move_player( Actor& player )
       case 'n': case '3': pos = Vec(+1,+1); break;
 
       case '.': case '5': return Action::WAIT;
+
+      case 'L': _look_loop( player ); break;
 
       default: ;
     }
@@ -538,10 +581,6 @@ void render()
             update_map( player->pos );
     }
 
-    TCODConsole::root->setDefaultForeground( TCODColor::white );
-    TCODConsole::root->setDefaultBackground( TCODColor::black );
-    TCODConsole::root->clear();
-
     // Draw onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
@@ -585,6 +624,12 @@ void render()
                     bg = C::darkestGrey;
                     fg = C::lightBlue;
                 }
+            }
+
+            if( t.highlight ) {
+                bg = bg * 1.5;
+                fg = fg * 1.5;
+                t.hilgiht = false;
             }
 
             TCODConsole::root->setCharForeground( x, y, fg );
@@ -667,6 +712,11 @@ void render()
     }
 
     TCODConsole::flush();
+
+    // Prepare for next call.
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+    TCODConsole::root->setDefaultBackground( TCODColor::black );
+    TCODConsole::root->clear();
 }
 
 int _clamp_range( int x, int min, int max )
