@@ -104,6 +104,7 @@ WeakActorPtr wplayer;
 // Used by render() and move_monst().
 std::unique_ptr<TCODMap> fov; // Field of vision.
 std::unique_ptr<TCODDijkstra> playerDistance;
+TCODConsole overlay( grid.width, grid.height );
 
 /* 
  * Run mapgen.
@@ -489,7 +490,7 @@ void render()
     TCODConsole::root->setDefaultBackground( TCODColor::black );
     TCODConsole::root->clear();
 
-    // Draw onto root.
+    // Draw the map onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
         for( unsigned int y=0; y < grid.height; y++ ) 
@@ -584,7 +585,7 @@ void render()
             float alpha = float(duration) / msg::DURATION;
             TCODConsole::blit ( 
                 msgCons.get(), 0, 0, msg.size(), 1, 
-                TCODConsole::root, x, y++, 
+                &overlay, x, y++, 
                 alpha, alpha
             );
         }
@@ -594,11 +595,11 @@ void render()
     if( player ) {
         int y = grid.height - 1; // y-position of health bar.
 
-        TCODConsole::root->setDefaultBackground( TCODColor::red );
-        TCODConsole::root->setDefaultForeground( TCODColor::white );
+        overlay.setDefaultBackground( TCODColor::red );
+        overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
             (float(player->hp)/player->stats[HP]) * (grid.width/2);
-        TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
+        overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
@@ -607,13 +608,27 @@ void render()
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
-            TCODConsole::root->setAlignment( allignment );
-            TCODConsole::root->print( width/2, y, healthInfo );
+            overlay.setAlignment( allignment );
+            overlay.print( width/2, y, healthInfo );
             free( healthInfo );
         }
     }
 
+    // The overlay needs a blit-transparent key color, which cannot be black as
+    // that may be used. Any uncommon color will do.
+    const TCODColor KEY_COLOR(0.01f,0.01f,0.01f);
+    overlay.setKeyColor( KEY_COLOR );
+
+    TCODConsole::blit (
+        &overlay, 0, 0, grid.width, grid.height,
+        TCODConsole::root, 0, 0,
+        1, 1
+    );
     TCODConsole::flush();
+
+    overlay.setDefaultForeground( TCODColor::white );
+    overlay.setDefaultBackground( KEY_COLOR );
+    overlay.clear();
 }
 
 int _clamp_range( int x, int min, int max )
