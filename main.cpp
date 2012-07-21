@@ -104,6 +104,7 @@ WeakActorPtr wplayer;
 // Used by render() and move_monst().
 std::unique_ptr<TCODMap> fov; // Field of vision.
 std::unique_ptr<TCODDijkstra> playerDistance;
+TCODConsole overlay( grid.width, grid.height );
 
 /* 
  * Run mapgen.
@@ -183,6 +184,12 @@ bool walkable( const Vec& pos )
     return grid.get( pos ).c == '.';
 }
 
+int clamp( int x, int min, int max )
+{
+    if( x < min )      x = min;
+    else if( x > max ) x = max;
+    return x;
+}
 
 int main()
 {
@@ -365,6 +372,81 @@ void update_map( const Vec& pos )
     playerDistance->compute( pos.x(), pos.y() );
 }
 
+void _look_loop( const Actor& player )
+{
+    Vec lpos = player.pos; // Look position.
+    while( true )
+    {
+        playerDistance->setPath( lpos.x(), lpos.y() );
+
+        Vec pos = lpos;
+        do {
+            grid.get(pos).highlight = true;
+            playerDistance->walk( &pos.x(), &pos.y() );
+        } while( playerDistance->size() > 0 );
+
+        // Loop terminates before highlighting player's position.
+        grid.get(player.pos).highlight = true;
+
+        // Tell the player what they're looking at.
+        if( grid.get(lpos).visible )
+        {
+            const int INFO_LEN = 20;
+            std::string info;
+
+            switch( grid.get(lpos).c ) {
+              case '.': info = "A stone floor."; break;
+              case '#': info = "A stone wall."; break;
+            }
+
+            ActorList::iterator actor;
+            if( (actor = actor_at(lpos)) != std::end(actors) ) {
+                char cinfo[INFO_LEN];
+                if( actor->get() == &player )
+                    sprintf( cinfo, "It's you!" );
+                else
+                    sprintf( cinfo, "You see %s.", (*actor)->name.c_str() );
+                info = cinfo;
+            }
+
+            static TCODConsole infobox(INFO_LEN,1);
+
+            infobox.setDefaultForeground( TCODColor::green );
+            infobox.print( 0, 0, info.c_str() );
+
+            TCODConsole::blit (
+                &infobox, 0, 0, info.size(), 1,
+                &overlay, 
+                // Draw it centered on the x-axis
+                clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
+                // and just above or below on the y-axis.
+                lpos.y() + (lpos.y() > 3 ? -2 : +2),
+                1, 0.5f
+            );
+        }
+
+        render();
+
+        switch( next_pressed_key() ) {
+          // Cardinal directions.
+          case 'h': case '4': case TCODK_LEFT:  lpos.x() -= 1; break;
+          case 'l': case '6': case TCODK_RIGHT: lpos.x() += 1; break;
+          case 'k': case '8': case TCODK_UP:    lpos.y() -= 1; break;
+          case 'j': case '2': case TCODK_DOWN:  lpos.y() += 1; break;
+
+          // Diagonals.
+          case 'y': case '7': lpos += Vec(-1,-1); break;
+          case 'u': case '9': lpos += Vec(+1,-1); break;
+          case 'b': case '1': lpos += Vec(-1,+1); break;
+          case 'n': case '3': lpos += Vec(+1,+1); break;
+
+          // Render one last time to unset the highlight path 
+          // and erase the infobox.
+          default: render(); return;
+        }
+    }
+}
+
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -384,6 +466,8 @@ Action move_player( Actor& player )
       case 'n': case '3': pos = Vec(+1,+1); break;
 
       case '.': case '5': return Action::WAIT;
+
+      case 'L': _look_loop( player ); break;
 
       default: ;
     }
@@ -485,11 +569,7 @@ void render()
             update_map( player->pos );
     }
 
-    TCODConsole::root->setDefaultForeground( TCODColor::white );
-    TCODConsole::root->setDefaultBackground( TCODColor::black );
-    TCODConsole::root->clear();
-
-    // Draw onto root.
+    // Draw the map onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
         for( unsigned int y=0; y < grid.height; y++ ) 
@@ -532,6 +612,12 @@ void render()
                     bg = C::darkestGrey;
                     fg = C::lightBlue;
                 }
+            }
+
+            if( t.highlight ) {
+                bg = bg * 1.5;
+                fg = fg * 1.5;
+                t.highlight = false;
             }
 
             TCODConsole::root->setCharForeground( x, y, fg );
@@ -584,7 +670,7 @@ void render()
             float alpha = float(duration) / msg::DURATION;
             TCODConsole::blit ( 
                 msgCons.get(), 0, 0, msg.size(), 1, 
-                TCODConsole::root, x, y++, 
+                &overlay, x, y++, 
                 alpha, alpha
             );
         }
@@ -594,11 +680,11 @@ void render()
     if( player ) {
         int y = grid.height - 1; // y-position of health bar.
 
-        TCODConsole::root->setDefaultBackground( TCODColor::red );
-        TCODConsole::root->setDefaultForeground( TCODColor::white );
+        overlay.setDefaultBackground( TCODColor::red );
+        overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
             (float(player->hp)/player->stats[HP]) * (grid.width/2);
-        TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
+        overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
@@ -607,26 +693,38 @@ void render()
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
-            TCODConsole::root->setAlignment( allignment );
-            TCODConsole::root->print( width/2, y, healthInfo );
+            overlay.setAlignment( allignment );
+            overlay.print( width/2, y, healthInfo );
             free( healthInfo );
         }
     }
 
-    TCODConsole::flush();
-}
+    // The overlay needs a blit-transparent key color, which cannot be black as
+    // that may be used. Any uncommon color will do.
+    const TCODColor KEY_COLOR(0.01f,0.01f,0.01f);
+    overlay.setKeyColor( KEY_COLOR );
 
-int _clamp_range( int x, int min, int max )
-{
-    if( x < min )      x = min;
-    else if( x > max ) x = max;
-    return x;
+    TCODConsole::blit (
+        &overlay, 0, 0, grid.width, grid.height,
+        TCODConsole::root, 0, 0,
+        1, 1
+    );
+    TCODConsole::flush();
+
+    // Prepare for next call.
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+    TCODConsole::root->setDefaultBackground( TCODColor::black );
+    TCODConsole::root->clear();
+    
+    overlay.setDefaultForeground( TCODColor::white );
+    overlay.setDefaultBackground( KEY_COLOR );
+    overlay.clear();
 }
 
 Vec keep_inside( const TCODConsole& cons, Vec v )
 {
-    v.x( _clamp_range(v.x(), 1, cons.getWidth()-1) );
-    v.y( _clamp_range(v.y(), 1, cons.getWidth()-1) );
+    v.x( clamp(v.x(), 1, cons.getWidth()-1) );
+    v.y( clamp(v.y(), 1, cons.getWidth()-1) );
     return v;
 }
 

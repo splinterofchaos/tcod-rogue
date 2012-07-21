@@ -8,13 +8,18 @@ typedef Vector<int,2> Vec;
 
 struct Tile
 {
-    bool seen, visible;
+    bool seen      : 1;
+    bool visible   : 1;
+    bool highlight : 1; 
     char c;
 
-    Tile() : seen(false), visible(false), c(' ') {}
+    Tile() : c(' ') { init(); }
 
     // Allow implicit construction.
-    Tile( char c ) : seen(false), visible(false), c(c) {}
+    Tile( char c ) : c(c) { init(); }
+
+  private:
+    void init() { seen = visible = highlight = false; }
 };
 
 // main.cpp
