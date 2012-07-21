@@ -184,6 +184,12 @@ bool walkable( const Vec& pos )
     return grid.get( pos ).c == '.';
 }
 
+int clamp( int x, int min, int max )
+{
+    if( x < min )      x = min;
+    else if( x > max ) x = max;
+    return x;
+}
 
 int main()
 {
@@ -382,22 +388,61 @@ void _look_loop( const Actor& player )
         // Loop terminates before highlighting player's position.
         grid.get(player.pos).highlight = true;
 
+        // Tell the player what they're looking at.
+        if( grid.get(lpos).visible )
+        {
+            const int INFO_LEN = 20;
+            std::string info;
+
+            switch( grid.get(lpos).c ) {
+              case '.': info = "A stone floor."; break;
+              case '#': info = "A stone wall."; break;
+            }
+
+            ActorList::iterator actor;
+            if( (actor = actor_at(lpos)) != std::end(actors) ) {
+                char cinfo[INFO_LEN];
+                if( actor->get() == &player )
+                    sprintf( cinfo, "It's you!" );
+                else
+                    sprintf( cinfo, "You see %s.", (*actor)->name.c_str() );
+                info = cinfo;
+            }
+
+            static TCODConsole infobox(INFO_LEN,1);
+
+            infobox.setDefaultForeground( TCODColor::green );
+            infobox.print( 0, 0, info.c_str() );
+
+            TCODConsole::blit (
+                &infobox, 0, 0, info.size(), 1,
+                &overlay, 
+                // Draw it centered on the x-axis
+                clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
+                // and just above or below on the y-axis.
+                lpos.y() + (lpos.y() > 3 ? -2 : +2),
+                1, 0.5f
+            );
+        }
+
         render();
 
         switch( next_pressed_key() ) {
-            // Cardinal directions.
+          // Cardinal directions.
           case 'h': case '4': case TCODK_LEFT:  lpos.x() -= 1; break;
           case 'l': case '6': case TCODK_RIGHT: lpos.x() += 1; break;
           case 'k': case '8': case TCODK_UP:    lpos.y() -= 1; break;
           case 'j': case '2': case TCODK_DOWN:  lpos.y() += 1; break;
 
-                                                // Diagonals.
+          // Diagonals.
           case 'y': case '7': lpos += Vec(-1,-1); break;
           case 'u': case '9': lpos += Vec(+1,-1); break;
           case 'b': case '1': lpos += Vec(-1,+1); break;
           case 'n': case '3': lpos += Vec(+1,+1); break;
 
-          default: return;
+          // Render one last time to unset the highlight path 
+          // and erase the infobox.
+          default: render(); return;
         }
     }
 }
@@ -676,17 +721,10 @@ void render()
     overlay.clear();
 }
 
-int _clamp_range( int x, int min, int max )
-{
-    if( x < min )      x = min;
-    else if( x > max ) x = max;
-    return x;
-}
-
 Vec keep_inside( const TCODConsole& cons, Vec v )
 {
-    v.x( _clamp_range(v.x(), 1, cons.getWidth()-1) );
-    v.y( _clamp_range(v.y(), 1, cons.getWidth()-1) );
+    v.x( clamp(v.x(), 1, cons.getWidth()-1) );
+    v.y( clamp(v.y(), 1, cons.getWidth()-1) );
     return v;
 }
 
