@@ -1,10 +1,13 @@
 
-#include "libtcod.hpp"
-
 #include "Vector.h"
 #include "Pure.h"
 #include "Grid.h"
 #include "random.h"
+#include "msg.h"
+
+#include "Rogue.h"
+
+#include "libtcod.hpp"
 
 #include <cstdlib>
 #include <cstdio>
@@ -13,20 +16,7 @@
 #include <list>
 #include <string>
 
-typedef Vector<int,2> Vec;
-
 Vec mapDims( 80, 60 );
-
-struct Tile
-{
-    bool seen, visible;
-    char c;
-
-    Tile() : seen(false), visible(false), c(' ') {}
-
-    // Allow implicit construction.
-    Tile( char c ) : seen(false), visible(false), c(c) {}
-};
 
 Grid<Tile> grid( 80, 60, '#' );
 
@@ -114,6 +104,7 @@ WeakActorPtr wplayer;
 // Used by render() and move_monst().
 std::unique_ptr<TCODMap> fov; // Field of vision.
 std::unique_ptr<TCODDijkstra> playerDistance;
+TCODConsole overlay( grid.width, grid.height );
 
 /* 
  * Run mapgen.
@@ -193,45 +184,12 @@ bool walkable( const Vec& pos )
     return grid.get( pos ).c == '.';
 }
 
-// Data for a message like "you step on some grass" or "you hit it".
-struct Message
+int clamp( int x, int min, int max )
 {
-    enum Type {
-        NORMAL,
-        SPECIAL,
-        COMBAT
-    };
-
-    static const int DURATION = 4;
-    std::string msg;
-    int duration; // How many times this message should be printed.
-
-    TCODColor fg, bg;
-
-    Message( std::string msg, Type type ) 
-        : msg( std::move(msg) ), duration( DURATION )
-    { 
-        typedef TCODColor C;
-        switch( type ) {
-          case SPECIAL: fg=C::lightestYellow; bg=C::black; break;
-          case COMBAT: fg=C::lightestFlame; bg=C::desaturatedYellow; break;
-
-          default:
-          case NORMAL: fg=C::white; bg=C::black; break;
-        }
-    }
-    Message( Message&& other, Type type ) 
-        : msg( std::move(other.msg) ), duration( other.duration ), 
-          fg( other.fg ), bg( other.bg )
-    { 
-    }
-};
-
-std::list< Message > messages;
-
-/* Put new message into messages and stdout. */
-void new_message( Message::Type type, const char* fmt, ... )
-    __attribute__ ((format (printf, 2, 3)));
+    if( x < min )      x = min;
+    else if( x > max ) x = max;
+    return x;
+}
 
 int main()
 {
@@ -255,7 +213,7 @@ int main()
         TCODConsole::root->clear();
 
         TCOD_key_t key;
-        do key = TCODConsole::waitForKeypress( true );
+        do key = TCODConsole::waitForKeypress( false );
         while( not key.pressed );
 
         if( key.vk == TCODK_ENTER ) {
@@ -280,8 +238,7 @@ int main()
     generate_grid();
     render();
 
-    new_message( Message::SPECIAL, "%s has entered the game.", 
-                 playerName.c_str() );
+    msg::special( "%s has entered the game.", playerName.c_str() );
 
     int time = 0;
 
@@ -337,7 +294,7 @@ int main()
         if( act.type == Action::MOVE and not walkable(act.pos) 
             and actorptr == player ) {
             // Don't do this for an NPC. Could cause an infinite loop.
-            new_message( Message::NORMAL, "You cannot move there." );
+            msg::normal( "You cannot move there." );
             continue;
         }
 
@@ -415,6 +372,81 @@ void update_map( const Vec& pos )
     playerDistance->compute( pos.x(), pos.y() );
 }
 
+void _look_loop( const Actor& player )
+{
+    Vec lpos = player.pos; // Look position.
+    while( true )
+    {
+        playerDistance->setPath( lpos.x(), lpos.y() );
+
+        Vec pos = lpos;
+        do {
+            grid.get(pos).highlight = true;
+            playerDistance->walk( &pos.x(), &pos.y() );
+        } while( playerDistance->size() > 0 );
+
+        // Loop terminates before highlighting player's position.
+        grid.get(player.pos).highlight = true;
+
+        // Tell the player what they're looking at.
+        if( grid.get(lpos).visible )
+        {
+            const int INFO_LEN = 20;
+            std::string info;
+
+            switch( grid.get(lpos).c ) {
+              case '.': info = "A stone floor."; break;
+              case '#': info = "A stone wall."; break;
+            }
+
+            ActorList::iterator actor;
+            if( (actor = actor_at(lpos)) != std::end(actors) ) {
+                char cinfo[INFO_LEN];
+                if( actor->get() == &player )
+                    sprintf( cinfo, "It's you!" );
+                else
+                    sprintf( cinfo, "You see %s.", (*actor)->name.c_str() );
+                info = cinfo;
+            }
+
+            static TCODConsole infobox(INFO_LEN,1);
+
+            infobox.setDefaultForeground( TCODColor::green );
+            infobox.print( 0, 0, info.c_str() );
+
+            TCODConsole::blit (
+                &infobox, 0, 0, info.size(), 1,
+                &overlay, 
+                // Draw it centered on the x-axis
+                clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
+                // and just above or below on the y-axis.
+                lpos.y() + (lpos.y() > 3 ? -2 : +2),
+                1, 0.5f
+            );
+        }
+
+        render();
+
+        switch( next_pressed_key() ) {
+          // Cardinal directions.
+          case 'h': case '4': case TCODK_LEFT:  lpos.x() -= 1; break;
+          case 'l': case '6': case TCODK_RIGHT: lpos.x() += 1; break;
+          case 'k': case '8': case TCODK_UP:    lpos.y() -= 1; break;
+          case 'j': case '2': case TCODK_DOWN:  lpos.y() += 1; break;
+
+          // Diagonals.
+          case 'y': case '7': lpos += Vec(-1,-1); break;
+          case 'u': case '9': lpos += Vec(+1,-1); break;
+          case 'b': case '1': lpos += Vec(-1,+1); break;
+          case 'n': case '3': lpos += Vec(+1,+1); break;
+
+          // Render one last time to unset the highlight path 
+          // and erase the infobox.
+          default: render(); return;
+        }
+    }
+}
+
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -434,6 +466,8 @@ Action move_player( Actor& player )
       case 'n': case '3': pos = Vec(+1,+1); break;
 
       case '.': case '5': return Action::WAIT;
+
+      case 'L': _look_loop( player ); break;
 
       default: ;
     }
@@ -502,18 +536,14 @@ bool attack( const Actor& aggressor, Actor& victim )
     } 
 
     if( verb != DODGED ) {
-        new_message (
-            Message::COMBAT, "%s %s %s%c", 
-            aggressor.name.c_str(), verb, victim.name.c_str(),
-            criticalHit ? '!' : '.' 
-        );
+        msg::combat( "%s %s %s%c", 
+                     aggressor.name.c_str(), verb, victim.name.c_str(),
+                     criticalHit ? '!' : '.' );
     } else {
         // "the aggressor dodged the victim" doesn't make sense, 
         // so do something different for dodging.
-        new_message (
-            Message::COMBAT, "%s dodged %s's attack.", 
-            victim.name.c_str(), aggressor.name.c_str()
-        );
+        msg::combat( "%s dodged %s's attack.", 
+                     victim.name.c_str(), aggressor.name.c_str() );
     }
 
     return verb == KILLED;
@@ -521,6 +551,8 @@ bool attack( const Actor& aggressor, Actor& victim )
 
 void render()
 {
+    ActorPtr player = wplayer.lock();
+
     if( not fov or fov->getWidth()  != (int)grid.width 
                 or fov->getHeight() != (int)grid.height ) 
     {
@@ -533,16 +565,11 @@ void render()
 
         playerDistance.reset( new TCODDijkstra(fov.get()) );
 
-        ActorPtr player = wplayer.lock();
         if( player )
             update_map( player->pos );
     }
 
-    TCODConsole::root->setDefaultForeground( TCODColor::white );
-    TCODConsole::root->setDefaultBackground( TCODColor::black );
-    TCODConsole::root->clear();
-
-    // Draw onto root.
+    // Draw the map onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
         for( unsigned int y=0; y < grid.height; y++ ) 
@@ -587,6 +614,12 @@ void render()
                 }
             }
 
+            if( t.highlight ) {
+                bg = bg * 1.5;
+                fg = fg * 1.5;
+                t.highlight = false;
+            }
+
             TCODConsole::root->setCharForeground( x, y, fg );
             TCODConsole::root->setCharBackground( x, y, bg );
         }
@@ -617,41 +650,41 @@ void render()
     }
 
     // Print messages.
-    int y = 0;
-    TCODConsole::root->setAlignment( TCOD_LEFT );
-    for( auto it=std::begin(messages); it!=std::end(messages); it++ )
-    {
-        Message& msg = *it;
-        if( not msg.duration ) {
-            messages.erase( it, std::end(messages) );
-            break;
-        }
-
-        static TCODConsole msgCons( 40, 1 );
-        msgCons.setDefaultForeground( msg.fg );
-        msgCons.setDefaultBackground( msg.bg );
-        msgCons.clear();
-        msgCons.print( 0, 0, msg.msg.c_str() );
-        msgCons.flush();
-
-        float alpha = float(msg.duration--) / Message::DURATION;
-        TCODConsole::blit ( 
-            &msgCons, 0, 0, msgCons.getWidth(), msgCons.getHeight(), 
-            TCODConsole::root, 1, y++, 
-            alpha, alpha
-        );
+    const int SIZE = grid.width / 2; // Max size of message.
+    static std::unique_ptr<TCODConsole> msgCons( nullptr );
+    if( not msgCons or msgCons->getWidth() != SIZE ) {
+        msgCons.reset( new TCODConsole(SIZE,1) );
+        msgCons->setBackgroundFlag( TCOD_BKGND_SET );
     }
 
+    int y = 0;
+    int x = player and player->pos.x() > SIZE ?  1 : SIZE;
+    msg::for_each (
+        [&]( const std::string& msg, 
+             const TCODColor& fg, const TCODColor& bg, int duration )
+        {
+            msgCons->setDefaultForeground( fg );
+            msgCons->setDefaultBackground( bg );
+            msgCons->print( 0, 0, msg.c_str() );
+
+            float alpha = float(duration) / msg::DURATION;
+            TCODConsole::blit ( 
+                msgCons.get(), 0, 0, msg.size(), 1, 
+                &overlay, x, y++, 
+                alpha, alpha
+            );
+        }
+    );
+
     // Print a health bar.
-    ActorPtr player = wplayer.lock();
     if( player ) {
         int y = grid.height - 1; // y-position of health bar.
 
-        TCODConsole::root->setDefaultBackground( TCODColor::red );
-        TCODConsole::root->setDefaultForeground( TCODColor::white );
+        overlay.setDefaultBackground( TCODColor::red );
+        overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
             (float(player->hp)/player->stats[HP]) * (grid.width/2);
-        TCODConsole::root->hline( 0, y, width, TCOD_BKGND_SET );
+        overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
@@ -660,26 +693,38 @@ void render()
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
-            TCODConsole::root->setAlignment( allignment );
-            TCODConsole::root->print( width/2, y, healthInfo );
+            overlay.setAlignment( allignment );
+            overlay.print( width/2, y, healthInfo );
             free( healthInfo );
         }
     }
 
-    TCODConsole::flush();
-}
+    // The overlay needs a blit-transparent key color, which cannot be black as
+    // that may be used. Any uncommon color will do.
+    const TCODColor KEY_COLOR(0.01f,0.01f,0.01f);
+    overlay.setKeyColor( KEY_COLOR );
 
-int _clamp_range( int x, int min, int max )
-{
-    if( x < min )      x = min;
-    else if( x > max ) x = max;
-    return x;
+    TCODConsole::blit (
+        &overlay, 0, 0, grid.width, grid.height,
+        TCODConsole::root, 0, 0,
+        1, 1
+    );
+    TCODConsole::flush();
+
+    // Prepare for next call.
+    TCODConsole::root->setDefaultForeground( TCODColor::white );
+    TCODConsole::root->setDefaultBackground( TCODColor::black );
+    TCODConsole::root->clear();
+    
+    overlay.setDefaultForeground( TCODColor::white );
+    overlay.setDefaultBackground( KEY_COLOR );
+    overlay.clear();
 }
 
 Vec keep_inside( const TCODConsole& cons, Vec v )
 {
-    v.x( _clamp_range(v.x(), 1, cons.getWidth()-1) );
-    v.y( _clamp_range(v.y(), 1, cons.getWidth()-1) );
+    v.x( clamp(v.x(), 1, cons.getWidth()-1) );
+    v.y( clamp(v.y(), 1, cons.getWidth()-1) );
     return v;
 }
 
@@ -708,22 +753,6 @@ bool blocked( const Vec& pos )
 }
 
 #include <cstdarg>
-void new_message( Message::Type type, const char* fmt, ... )
-{
-    va_list vl;
-    va_start( vl, fmt );
-    
-    char* msg;
-    vasprintf( &msg, fmt, vl );
-    if( msg ) {
-        messages.push_front( Message(msg,type) );
-        printf( "%s\n", msg );
-        free( msg );
-    }
-
-    va_end( vl );
-}
-
 void die( const char* fmt, ... )
 {
     va_list vl;
