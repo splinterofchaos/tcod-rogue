@@ -1,0 +1,35 @@
+
+
+GET THE SOURCE
+
+    git clone https://github.com/splinterofchaos/tcod-rogue.git
+    cd tcod-rogue
+    
+    git submodule init
+    git submodule update
+
+
+HOW TO COMPILE
+
+The only dependency is libtcod, which has several dependencies of its own. The
+makefile will download and try to compile libtcod if the directory doesn't
+exist, but it may require manually compiling if that doesn't work.
+
+The fallowing (may) install all the needed dependencies on Ubuntu:
+    sudo apt-get -y install zlib1g-dev libpng12-dev libsdl1.2-dev upx
+
+You will also need g++ (4.6 or greater--below is untested), git, and mercurial.
+
+If everything is set, a simple "make" should suffice. I had to move libtcod.so
+and libtcodxx.so to /lib in order to run the executable. 
+(There may be a better way).
+
+
+HOW TO PLAY
+
+Movement can be done with the arrow keys, number pad, or hjkl (classic). To
+check out your surroundings, press L to enter look mode and use the movement
+keys to move the cursor. Press any non-movement key to exit.
+
+Attack a monster by running up to it. Quick monsters may move twice when you
+move once and slow monsters may not move until your second turn.
