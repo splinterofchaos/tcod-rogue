@@ -92,18 +92,22 @@ struct Actor
     }
 };
 
+typedef std::list<Actor> ActorList;
+ActorList actors;
+
+ActorList::iterator playeriter = std::end(actors);
 std::string playerName;
 
-typedef std::shared_ptr<Actor> ActorPtr;
-typedef std::weak_ptr<Actor> WeakActorPtr;
-typedef std::list<ActorPtr> ActorList;
+/* Player's Field of Vision. */
+TCODMap fov( grid.width, grid.height ); 
+/* Distances from player. */
+TCODDijkstra playerDistance( &fov );
+TCODConsole& console = *TCODConsole::root;
 
-ActorList actors;
-WeakActorPtr wplayer;
-
-// Used by render() and move_monst().
-std::unique_ptr<TCODMap> fov; // Field of vision.
-std::unique_ptr<TCODDijkstra> playerDistance;
+/* 
+ * Graphical overlay to draw UI. 
+ * Painted over TCODConsole::root in render() offering no transparency.
+ */
 TCODConsole overlay( grid.width, grid.height );
 
 /* 
@@ -174,14 +178,16 @@ bool attack( const Actor& aggressor, Actor& victim );
 ActorList::iterator actor_at( const Vec& pos )
 {
     return pure::find_if ( 
-        [&](const ActorPtr& aptr) { return aptr->pos == pos; },
+        [&](const Actor& aptr) { return aptr.pos == pos; },
         actors
     );
 }
 
 bool walkable( const Vec& pos )
 {
-    return grid.get( pos ).c == '.';
+    return pos.x() > 0 and pos.y() > 0 
+       and pos.x() < grid.width and pos.y() < grid.height 
+       and grid.get( pos ).c == '.';
 }
 
 int clamp( int x, int min, int max )
@@ -244,70 +250,87 @@ int main()
 
     while( actors.size() and not TCODConsole::isWindowClosed() )
     {
-        ActorPtr player = wplayer.lock();
-        if( not player )
+        if( playeriter == std::end(actors) )
             break;
 
-        ActorList::iterator actoriter = pure::min (
-            [](const ActorPtr& a, const ActorPtr& b)
-            { return a->nextMove < b->nextMove; },
+        ActorList::iterator actor = pure::min (
+            [](const Actor& a, const Actor& b)
+            { return a.nextMove < b.nextMove; },
             actors
         );
 
-        ActorPtr& actorptr = *actoriter;
-        Actor& actor = *actorptr;
+        if( actor == std::end(actors) ) {
+            msg::special( "NO MORE PLAYERS!" );
+            break;
+        }
 
-        if( actor.hp <= 0 ) {
-            actors.erase( actoriter );
+        if( actor->hp <= 0 ) {
+            msg::combat( "%s has mysteriously died.", actor->name.c_str() );
+            actors.erase( actor );
             continue;
         }
 
-        time = actor.nextMove;
+        time = actor->nextMove;
 
         Action act;
-        if( actorptr == player ) {
+        if( actor == playeriter ) {
             render();
-            act = move_player( actor );
+            act = move_player( *actor );
         } else {
-            act = move_monst( actor );
+            act = move_monst( *actor );
         }
 
         if( act.type == Action::MOVE and walkable(act.pos) ) 
         {
             // Walk to act.pos or attack what's there.
-            auto targetiter = actor_at( act.pos );
-            if( targetiter != std::end(actors) ) 
+            auto target = actor_at( act.pos );
+            if( target != std::end(actors) ) 
             {
-                if( attack(actor, *(*targetiter)) )
-                    actors.erase( targetiter );
+                if( attack(*actor,*target) ) {
+                    if( target == playeriter )
+                        playeriter = std::end( actors );
+                    actors.erase( target );
+                }
             } 
             else
             {
-                actor.pos = act.pos;
-                if( actorptr == player )
-                    update_map( player->pos );
+                actor->pos = act.pos;
+                if( actor == playeriter )
+                    update_map( actor->pos );
             }
 
-            actor.nextMove += 30 - actor.stats[AGILITY];
+            actor->nextMove += 30 - actor->stats[AGILITY];
         }
 
+        if( act.type == Action::QUIT ) {
+            printf( "QUIT received.\n" );
+            return 0;
+        }
+
+        /* 
+         * Give the player a chance to make a different move if the selected
+         * choice isn't valid. Doing this for NPCs too would cause an infinite
+         * loop. 
+         */
         if( act.type == Action::MOVE and not walkable(act.pos) 
-            and actorptr == player ) {
-            // Don't do this for an NPC. Could cause an infinite loop.
+            and actor == playeriter ) 
+        {
             msg::normal( "You cannot move there." );
             continue;
         }
 
-        if( act.type == Action::QUIT )
-            return 0;
-
-        if( actor.nextMove == time )
-            // Either did not move or decided to wait.
-            actor.nextMove += actor.stats[AGILITY]/2;
+        // Don't let a turn go on infinitely. 
+        // NPC didn't move or actor is waiting.
+        if( actor->nextMove == time )
+            actor->nextMove += actor->stats[AGILITY]/2;
     }
 
-    if( not wplayer.lock() )
+    if( playeriter == std::end(actors) )
         printf( "You, %s, have died. Have a nice day.\n", playerName.c_str() );
+    if( actors.size() == 0 )
+        printf( "Where did everyone go?\n" );
+    if( TCODConsole::isWindowClosed() )
+        printf( "Window closed.\n" );
 }
 
 void generate_grid()
@@ -336,40 +359,50 @@ void generate_grid()
         if( spawnpt[0] != 'X' )
             continue;
 
-        ActorPtr actor( new Actor ); 
-        sscanf( spawnpt, "X %u %u", &actor->pos.x(), &actor->pos.y() );
+        actors.push_back( Actor() );
+        Actor& actor = actors.back(); 
 
-        if( not actors.size() ) {
+        sscanf( spawnpt, "X %u %u", &actor.pos.x(), &actor.pos.y() );
+
+        if( actors.size() == 1 ) {
             // First actor! Initialize as the player.
-            actor->name = playerName;
-            actor->race = "human";
-            wplayer = actor;
+            actor.name = playerName;
+            actor.race = "human";
+            playeriter = std::begin( actors );
         } else {
-            actor->race = races[ random(0, races.size()-1) ].name;
-            actor->name = "the " + actor->race;
+            actor.race = races[ random(0, races.size()-1) ].name;
+            actor.name = "the " + actor.race;
         }
 
-        auto raceIter = pure::find( actor->race, races );
+        auto raceIter = pure::find( actor.race, races );
         if( raceIter == std::end(races) )
             // This should never happen, but if it does...
             raceIter = std::begin( races );
         
-        actor->stats = raceIter->stats;
-        actor->hp    = actor->stats[HP];
-
-        actors.push_back( actor );
+        actor.stats = raceIter->stats;
+        actor.hp    = actor.stats[HP];
     }
 
     if( actors.size() == 0 )
         die( "No spawn point!" );
 
     pclose( mapgen );
+
+    // Initialize FOV.
+    pure::for_ij ( [&]( int x, int y ) { 
+             bool canWalk = walkable( Vec(x,y) );
+             fov.setProperties( x, y, canWalk, canWalk ); 
+        }, grid.width, grid.height 
+    );
+
+    if( playeriter != std::end(actors) )
+        update_map( playeriter->pos );
 }
 
 void update_map( const Vec& pos )
 {
-    fov->computeFov( pos.x(), pos.y(), 10, true, FOV_PERMISSIVE_4 );
-    playerDistance->compute( pos.x(), pos.y() );
+    fov.computeFov( pos.x(), pos.y(), 10, true, FOV_PERMISSIVE_4 );
+    playerDistance.compute( pos.x(), pos.y() );
 }
 
 void _look_loop( const Actor& player )
@@ -377,13 +410,13 @@ void _look_loop( const Actor& player )
     Vec lpos = player.pos; // Look position.
     while( true )
     {
-        playerDistance->setPath( lpos.x(), lpos.y() );
+        playerDistance.setPath( lpos.x(), lpos.y() );
 
         Vec pos = lpos;
         do {
             grid.get(pos).highlight = true;
-            playerDistance->walk( &pos.x(), &pos.y() );
-        } while( playerDistance->size() > 0 );
+            playerDistance.walk( &pos.x(), &pos.y() );
+        } while( playerDistance.size() > 0 );
 
         // Loop terminates before highlighting player's position.
         grid.get(player.pos).highlight = true;
@@ -402,10 +435,10 @@ void _look_loop( const Actor& player )
             ActorList::iterator actor;
             if( (actor = actor_at(lpos)) != std::end(actors) ) {
                 char cinfo[INFO_LEN];
-                if( actor->get() == &player )
+                if( actor == playeriter )
                     sprintf( cinfo, "It's you!" );
                 else
-                    sprintf( cinfo, "You see %s.", (*actor)->name.c_str() );
+                    sprintf( cinfo, "You see %s.", actor->name.c_str() );
                 info = cinfo;
             }
 
@@ -484,14 +517,14 @@ Action move_monst( Actor& monst )
     int& x = monst.pos.x();
     int& y = monst.pos.y();
 
-    if( not fov->isInFov(x, y) )
+    if( not fov.isInFov(x, y) )
         return Action( Action::WAIT );
 
-    playerDistance->setPath( x, y );
-    playerDistance->reverse();
+    playerDistance.setPath( x, y );
+    playerDistance.reverse();
 
     Vec pos;
-    playerDistance->walk( &pos.x(), &pos.y() );
+    playerDistance.walk( &pos.x(), &pos.y() );
     return Action( Action::MOVE, pos );
 }
 
@@ -551,24 +584,6 @@ bool attack( const Actor& aggressor, Actor& victim )
 
 void render()
 {
-    ActorPtr player = wplayer.lock();
-
-    if( not fov or fov->getWidth()  != (int)grid.width 
-                or fov->getHeight() != (int)grid.height ) 
-    {
-        fov.reset( new TCODMap(grid.width, grid.height) );
-        for( unsigned int x=0; x < grid.width; x++ )
-            for( unsigned int y=0; y < grid.height; y++ ) {
-                bool walkable = (grid.get(x,y).c == '.');
-                fov->setProperties( x, y, walkable, walkable );
-            }
-
-        playerDistance.reset( new TCODDijkstra(fov.get()) );
-
-        if( player )
-            update_map( player->pos );
-    }
-
     // Draw the map onto root.
     for( unsigned int x=0; x < grid.width; x++ )
     {
@@ -581,7 +596,7 @@ void render()
              */
             Tile& t = grid.get( x, y );
 
-            if( fov->isInFov(x,y) )
+            if( fov.isInFov(x,y) )
                 t.seen = t.visible = true;
             else
                 t.visible = false;
@@ -625,16 +640,16 @@ void render()
         }
     }
 
-    for( auto& actorIter : actors ) {
+    for( auto& actor : actors ) {
 
-        const Vec& pos = actorIter->pos;
+        const Vec& pos = actor.pos;
         if( not grid.get(pos).visible )
             continue;
 
         int symbol = 'X';
         TCODColor color = TCODColor::white;
 
-        auto raceIter = pure::find( actorIter->race, races );
+        auto raceIter = pure::find( actor.race, races );
         if( raceIter != std::end(races) ) {
             symbol = raceIter->symbol;
             color = raceIter->color;
@@ -651,25 +666,23 @@ void render()
 
     // Print messages.
     const int SIZE = grid.width / 2; // Max size of message.
-    static std::unique_ptr<TCODConsole> msgCons( nullptr );
-    if( not msgCons or msgCons->getWidth() != SIZE ) {
-        msgCons.reset( new TCODConsole(SIZE,1) );
-        msgCons->setBackgroundFlag( TCOD_BKGND_SET );
-    }
+    static TCODConsole msgbox( SIZE, 1 );
+    msgbox.setBackgroundFlag( TCOD_BKGND_SET );
 
     int y = 0;
-    int x = player and player->pos.x() > SIZE ?  1 : SIZE;
+    int x = playeriter != std::end(actors) and playeriter->pos.x() > SIZE ?  
+        1 : SIZE;
     msg::for_each (
         [&]( const std::string& msg, 
              const TCODColor& fg, const TCODColor& bg, int duration )
         {
-            msgCons->setDefaultForeground( fg );
-            msgCons->setDefaultBackground( bg );
-            msgCons->print( 0, 0, msg.c_str() );
+            msgbox.setDefaultForeground( fg );
+            msgbox.setDefaultBackground( bg );
+            msgbox.print( 0, 0, msg.c_str() );
 
             float alpha = float(duration) / msg::DURATION;
             TCODConsole::blit ( 
-                msgCons.get(), 0, 0, msg.size(), 1, 
+                &msgbox, 0, 0, msg.size(), 1, 
                 &overlay, x, y++, 
                 alpha, alpha
             );
@@ -677,19 +690,19 @@ void render()
     );
 
     // Print a health bar.
-    if( player ) {
+    if( playeriter != std::end(actors) ) {
         int y = grid.height - 1; // y-position of health bar.
 
         overlay.setDefaultBackground( TCODColor::red );
         overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
-            (float(player->hp)/player->stats[HP]) * (grid.width/2);
+            (float(playeriter->hp)/playeriter->stats[HP]) * (grid.width/2);
         overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
         char* healthInfo;
-        asprintf( &healthInfo, healthFmt, player->hp, player->stats[HP] );
+        asprintf( &healthInfo, healthFmt, playeriter->hp, playeriter->stats[HP] );
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;

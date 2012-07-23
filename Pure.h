@@ -114,6 +114,23 @@ void for_each( const F& f, const Container& cont )
     std::for_each( std::begin(cont), std::end(cont), f );
 }
 
+template< class F, class I, class J >
+void for_ij( const F& f, I i, const I& imax, J j, const J& jmax )
+{
+    for( ; j != jmax; j++ )
+        for( ; i != imax; i++ )
+            f( i, j );
+}
+
+template< class F, class I, class J >
+void for_ij( const F& f, const I& imax, const J& jmax )
+{
+    for( J j = J(); j != jmax; j++ )
+        for( I i = I(); i != imax; i++ )
+            f( i, j );
+}
+
+
 template< typename Container, typename F >
 Container zip_with( const F& f, Container a, const Container& b )
 {
