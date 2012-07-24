@@ -51,27 +51,26 @@ namespace stats
     Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
 }
 
-struct Race
+struct Thing
 {
     const char* const name;
-    char symbol; // Race's image.
+    char symbol; // Thing's image.
     TCODColor color;
     Stats stats;
 };   
 
 /* 
- * Racial equality!
- * Assume that two different races have different names and two races with the
- * same name have the same attributes.
+ * Assume that two different things have different names and two things with
+ * the same name have the same attributes.
  */
-bool operator == ( const Race& r1, const Race& r2 )
+bool operator == ( const Thing& r1, const Thing& r2 )
 { return r1.name == r2.name; }
-bool operator == ( const Race& r, const std::string& name )
+bool operator == ( const Thing& r, const std::string& name )
 { return r.name == name; }
-bool operator == ( const std::string& name, const Race& r )
+bool operator == ( const std::string& name, const Thing& r )
 { return r == name; }
 
-std::vector< Race > races = {
+std::vector< Thing > races = {
     { "human",  '@', TCODColor(200,150, 50), stats::human  },
     { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
     { "bear",   'B', TCODColor(250,250,100), stats::bear   }
