@@ -7,9 +7,9 @@ CFLAGS  = -Wall -Wextra
 obj = .grid.o .random.o .msg.o
 
 
-rogue : main.cpp makefile Pure.h Vector.h libtcod ${obj}
+rogue : main.cpp makefile Pure/Pure.h Vector.h libtcod ${obj}
 	make -C mapgen/c++
-	${CC} -o rogue main.cpp -Ilibtcod/include ${obj} ${CFLAGS} ${LDFLAGS}
+	${CC} -o rogue main.cpp -IPure -Ilibtcod/include ${obj} ${CFLAGS} ${LDFLAGS}
 
 .random.o : random.*
 	${CC} -c -o .random.o random.cpp ${CFLAGS}

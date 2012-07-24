@@ -1,3 +1,6 @@
 [submodule "mapgen"]
 	path = mapgen
 	url = https://github.com/splinterofchaos/mapgen-test.git
+[submodule "Pure"]
+	path = Pure
+	url = https://github.com/splinterofchaos/Pure.git
