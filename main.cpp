@@ -49,9 +49,13 @@ namespace stats
     Stats human  = Stats{ 10,  5,  5,  0,  5 } + base;
     Stats kobold = Stats{  0, -3, 10,  8,  5 } + base;
     Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
+    
+    // Item stats.
+    Stats stick  = Stats{ 0, 5, 0, 0, 3 };
+    Stats pillow = Stats{ 3, 1, 0, 0, 0 };
 }
 
-struct Thing
+struct ThingData
 {
     const char* const name;
     char symbol; // Thing's image.
@@ -63,17 +67,33 @@ struct Thing
  * Assume that two different things have different names and two things with
  * the same name have the same attributes.
  */
-bool operator == ( const Thing& r1, const Thing& r2 )
+bool operator == ( const ThingData& r1, const ThingData& r2 )
 { return r1.name == r2.name; }
-bool operator == ( const Thing& r, const std::string& name )
+bool operator == ( const ThingData& r, const std::string& name )
 { return r.name == name; }
-bool operator == ( const std::string& name, const Thing& r )
+bool operator == ( const std::string& name, const ThingData& r )
 { return r == name; }
 
-std::vector< Thing > races = {
+std::vector< ThingData > catalogue = {
+    { "stick",  '/', TCODColor(200,150, 100), stats::stick  },
+    { "pillow", '+', TCODColor::white,        stats::pillow }
+};
+
+std::vector< ThingData > races = {
     { "human",  '@', TCODColor(200,150, 50), stats::human  },
     { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
     { "bear",   'B', TCODColor(250,250,100), stats::bear   }
+};
+
+struct Item
+{
+    std::string name;
+    Stats stats;
+};
+
+struct MapItem : Item
+{
+    Vec pos;
 };
 
 struct Actor
@@ -85,6 +105,10 @@ struct Actor
     int hp;
     int nextMove;
 
+    std::vector<Item> inventory;
+
+    Item weapon;
+
     Actor()
     {
         nextMove = 0;
@@ -92,7 +116,9 @@ struct Actor
 };
 
 typedef std::list<Actor> ActorList;
+typedef std::list<MapItem> ItemList;
 ActorList actors;
+ItemList  items;
 
 ActorList::iterator playeriter = std::end(actors);
 std::string playerName;
@@ -179,6 +205,14 @@ ActorList::iterator actor_at( const Vec& pos )
     return pure::find_if ( 
         [&](const Actor& aptr) { return aptr.pos == pos; },
         actors
+    );
+}
+
+ItemList::iterator item_at( const Vec& pos )
+{
+    return pure::find_if (
+        [&](const MapItem& item){ return item.pos == pos; },
+        items
     );
 }
 
@@ -354,7 +388,8 @@ void generate_grid()
 
     // Read spawn points.
     char spawnpt[50];
-    while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
+    unsigned int nspawns = 10;
+    while( nspawns-- and fgets(spawnpt, sizeof spawnpt, mapgen) ) {
         if( spawnpt[0] != 'X' )
             continue;
 
@@ -384,6 +419,16 @@ void generate_grid()
 
     if( actors.size() == 0 )
         die( "No spawn point!" );
+
+    while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
+        items.push_back( MapItem() );
+        MapItem& item = items.back();
+        sscanf( spawnpt, "X %u %u", &item.pos.x(), &item.pos.y() );
+
+        const ThingData& data = catalogue[ random(0, catalogue.size()-1) ];
+        item.name  = data.name;
+        item.stats = data.stats;
+    }
 
     pclose( mapgen );
 
@@ -432,13 +477,14 @@ void _look_loop( const Actor& player )
             }
 
             ActorList::iterator actor;
+            ItemList::iterator item;
             if( (actor = actor_at(lpos)) != std::end(actors) ) {
-                char cinfo[INFO_LEN];
                 if( actor == playeriter )
-                    sprintf( cinfo, "It's you!" );
+                    info = "It's you!";
                 else
-                    sprintf( cinfo, "You see %s.", actor->name.c_str() );
-                info = cinfo;
+                    info = "You see %s." + actor->name;
+            } else if( (item=item_at(lpos)) != std::end(items) ) {
+                info = "You see a " + item->name;
             }
 
             static TCODConsole infobox(INFO_LEN,1);
@@ -637,6 +683,24 @@ void render()
             TCODConsole::root->setCharForeground( x, y, fg );
             TCODConsole::root->setCharBackground( x, y, bg );
         }
+    }
+
+    for( auto& item : items ) {
+        const Vec& pos = item.pos;
+        if( not grid.get(pos).visible )
+            continue;
+
+        int symbol = 'X';
+        TCODColor color = TCODColor::white;
+
+        auto itemiter = pure::find( item.name, catalogue );
+        if( itemiter != std::end(catalogue) ) {
+            symbol = itemiter->symbol;
+            color  = itemiter->color;
+        }
+
+        TCODConsole::root->setChar( pos.x(), pos.y(), symbol );
+        TCODConsole::root->setCharForeground( pos.x(), pos.y(), color );
     }
 
     for( auto& actor : actors ) {
