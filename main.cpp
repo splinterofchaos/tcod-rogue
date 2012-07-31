@@ -173,6 +173,8 @@ struct Action
         MOVE,
         WAIT,
         ATTACK,
+        PICKUP,
+        DROP,
         QUIT
     } type;
 
@@ -332,7 +334,29 @@ int main()
                     update_map( actor->pos );
             }
 
-            actor->nextMove += 30 - actor->stats[AGILITY];
+            actor->nextMove += 50 - actor->stats[AGILITY];
+        }
+
+        if( act.type == Action::PICKUP ) 
+        {
+            auto item = item_at( actor->pos );
+            if( item != std::end(items) ) 
+            {
+                actor->inventory.push_back( *item );
+
+                if( actor == playeriter )
+                    msg::normal( "Got %s.", item->name.c_str() );
+                else if( grid.get(actor->pos).visible )
+                    msg::normal( "You see %s grab a %s.", 
+                                 actor->name.c_str(), item->name.c_str() );
+
+                items.erase( item );
+                actor->nextMove += 30 - actor->stats[AGILITY];
+            } 
+            else if( actor == playeriter ) 
+            {
+                msg::normal( "Nothing here to pick up." );
+            }
         }
 
         if( act.type == Action::QUIT ) {
@@ -546,6 +570,9 @@ Action move_player( Actor& player )
       case '.': case '5': return Action::WAIT;
 
       case 'L': _look_loop( player ); break;
+
+      case 'g': return Action::PICKUP;
+      case 'd': return Action::DROP;
 
       default: ;
     }
