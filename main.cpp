@@ -88,6 +88,7 @@ std::vector< ThingData > races = {
 struct Item
 {
     std::string name;
+    char symbol;
     Stats stats;
 };
 
@@ -452,6 +453,7 @@ void generate_grid()
         const ThingData& data = catalogue[ random(0, catalogue.size()-1) ];
         item.name  = data.name;
         item.stats = data.stats;
+        item.symbol = data.symbol;
     }
 
     pclose( mapgen );
@@ -549,6 +551,45 @@ void _look_loop( const Actor& player )
     }
 }
 
+void _inventory_mode( const Actor& player )
+{
+    if( not player.inventory.size() )
+    {
+        msg::normal( "You don't have anything." );
+        render();
+        return;
+    }
+
+    TCODConsole invcons( grid.width/2, player.inventory.size() + 1 );
+    unsigned int y = 0;
+    for( const Item& i : player.inventory ) 
+    {
+        char* row = nullptr;
+        asprintf( &row, "%c - (%c)%s", y+'a', i.symbol, i.name.c_str() );
+        invcons.print( 0, y++, row );
+        if( row ) free( row );
+    }
+
+    invcons.setDefaultForeground( TCODColor::red );
+    invcons.print( 0, y, "Press any key." );
+
+    TCODConsole::blit (
+        &invcons, 0, 0, invcons.getWidth(), invcons.getHeight(),
+        &overlay,
+        // Draw centered.
+        grid.width  / 2 - invcons.getWidth()  / 2, 
+        grid.height / 2 - invcons.getHeight() / 2
+    );
+
+    // Show the inventory (printed to overlay).
+    render();
+    // Wait for the player to finish reading.
+    next_pressed_key();
+    // Erase the inventory.
+    render();
+}
+
+
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -569,7 +610,11 @@ Action move_player( Actor& player )
 
       case '.': case '5': return Action::WAIT;
 
-      case 'L': _look_loop( player ); break;
+      case 'L': _look_loop( player ); 
+                return move_player(player);
+
+      case 'i':  _inventory_mode( player ); 
+                 return move_player(player);
 
       case 'g': return Action::PICKUP;
       case 'd': return Action::DROP;
