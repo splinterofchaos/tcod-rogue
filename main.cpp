@@ -109,8 +109,6 @@ struct Item
     }
 };
 
-Item fist() { return Item(catalogue[0]); }
-
 struct MapItem : Item
 {
     Vec pos;
@@ -124,6 +122,8 @@ struct MapItem : Item
 
 struct Actor
 {
+    static const Item FIST;
+
     std::string name;
     std::string race;
     Vec pos;
@@ -132,18 +132,37 @@ struct Actor
     int nextMove;
 
     typedef std::vector<Item> Inventory;
+    typedef Inventory::size_type II; // Inventory Index.
     Inventory inventory;
 
-    Item weapon;
+    II wpn;
 
     Actor()
     {
         nextMove = 0;
-        weapon = fist();
+        wpn = -1;
     }
 
-    Stats stats() const { return base + weapon.stats; }
+    Stats stats() const { return base + weapon().stats; }
+
+    void pickup( Item&& item ) { inventory.emplace_back( std::move(item) ); }
+
+    bool wielding() const { return wpn != -1; };
+    bool unwield() { bool ret = wielding(); wpn = -1; return ret; }
+    bool wield( II ii ) 
+    {
+        if( ii >= 0 and ii < inventory.size() ) {
+            wpn = ii;
+            return true;
+        }
+
+        return false;
+    }
+
+    const Item& weapon() const { return wielding() ? inventory[wpn] : FIST; }
 };
+
+const Item Actor::FIST = Item( catalogue[0] );
 
 typedef std::list<Actor> ActorList;
 typedef std::list<MapItem> ItemList;
@@ -241,7 +260,6 @@ bool attack( const Actor& aggressor, Actor& victim );
 
 /* Drop actor->inventory[i], if exists. Returns true on success. */
 bool drop( ActorList::iterator actor, unsigned int ii );
-bool drop_weapon( ActorList::iterator actor );
 
 /* Inventory Index to Char. */
 char iitoc( unsigned int i ) { return 'a' + i; }
@@ -268,7 +286,6 @@ ItemList::iterator item_at( const Vec& pos )
 void expire( ActorList::iterator actor )
 {
     while( actor->inventory.size() ) drop( actor, 0 );
-    drop_weapon( actor );
     if( actor == playeriter ) playeriter = std::end( actors );
     actors.erase( actor );
 }
@@ -496,7 +513,8 @@ void generate_grid()
         } else {
             actor.race = random_select(races).name;
             actor.name = "the " + actor.race;
-            actor.weapon = random_select(availableItems);
+            actor.pickup( random_select(availableItems) );
+            actor.wield( 0 );
         }
 
         auto raceIter = pure::find( actor.race, races );
@@ -541,6 +559,9 @@ bool drop( ActorList::iterator actor, unsigned int ii )
     Actor::Inventory& inv = actor->inventory;
     if( ii >= 0 and ii < inv.size() ) 
     {
+        if( ii == actor->wpn )
+            actor->unwield();
+
         const auto item = std::begin(inv) + ii;
 
         if( fov.isInFov(actor->pos.x(), actor->pos.y()) )
@@ -561,22 +582,6 @@ bool drop( ActorList::iterator actor, unsigned int ii )
     }
 
     return false;
-}
-
-bool drop_weapon( ActorList::iterator actor )
-{
-    if( actor->weapon.name == "fist" )
-        return false;
-    
-    if( actor != playeriter 
-        and fov.isInFov(actor->pos.x(), actor->pos.y()) )
-        msg::combat( "%s has dropped %s.", 
-                     actor->name.c_str(), actor->weapon.name.c_str() );
-
-    items.emplace_back( std::move(actor->weapon), actor->pos );
-    actor->weapon = fist();
-
-    return true;
 }
 
 void _look_loop( const Actor& player )
@@ -663,19 +668,27 @@ void _look_loop( const Actor& player )
 int _render_inventory( const Actor& player )
 {
     if( not player.inventory.size() )
-    {
         msg::normal( "You don't have anything." );
-        render();
-        return -1;
-    }
 
-    TCODConsole invcons( grid.width/2, player.inventory.size() + 1 );
+    TCODConsole invcons( grid.width/2, player.inventory.size() + 2 );
     unsigned int y = 0;
     for( const Item& i : player.inventory ) 
     {
+        const char* fmt;
+
+        if( y == player.wpn ) {
+            invcons.setDefaultForeground( TCODColor::green );
+            fmt = "%c - (%c)%s -- equipped";
+        } else {
+            invcons.setDefaultForeground( TCODColor::white );
+            fmt = "%c - (%c)%s";
+        }
+
         char* row = nullptr;
-        asprintf( &row, "%c - (%c)%s", iitoc(y), i.symbol, i.name.c_str() );
+        asprintf( &row, fmt, iitoc(y), i.symbol, i.name.c_str() );
+
         invcons.print( 0, y++, row );
+
         if( row ) free( row );
     }
 
@@ -746,13 +759,18 @@ Action move_player( Actor& player )
 
       case 'e': // Equip
         {
-            msg::special( "Equip what?" );
+            msg::special( "Equip what? (Type '.' (period) for nothing.)" );
             unsigned int ii = _render_inventory( player );
-            if( ii < player.inventory.size() and ii >= 0 ) {
-                player.weapon = std::move( player.inventory[ii] );
-                player.inventory.erase( player.inventory.begin() + ii );
-                msg::special( "Eqipped %s.", player.weapon.name.c_str() );
+            if( ii < player.inventory.size() and ii >= 0 ) 
+            {
+                player.wield( ii );
+                msg::special( "Eqipped %s.", player.weapon().name.c_str() );
                 render();
+            } 
+            else if( ii == ctoii('.') )
+            {
+                if( not player.unwield() )
+                    msg::special( "You weren't wielding anything." );
             }
 
             return move_player( player );
@@ -827,10 +845,10 @@ bool attack( const Actor& aggressor, Actor& victim )
     if( verb == DODGED ) {
         msg::combat( "%s dodged %s's %s.", 
                      victim.name.c_str(), aggressor.name.c_str(),
-                     aggressor.weapon.name.c_str() );
+                     aggressor.weapon().name.c_str() );
     } else {
         msg::combat( "%s's %s %s %s%c", // "attacker's wpn (hit/missed) who(./!)"
-                     aggressor.name.c_str(), aggressor.weapon.name.c_str(),
+                     aggressor.name.c_str(), aggressor.weapon().name.c_str(),
                      verb, 
                      victim.name.c_str(),
                      criticalHit ? '!' : '.' );
