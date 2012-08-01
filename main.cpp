@@ -26,6 +26,7 @@ enum StatType {
     AGILITY,
     DEXTERITY,
     ACCURACY,
+    NUTRITION, 
     N_STATS
 };
 
@@ -43,22 +44,22 @@ Stats operator/( const Stats& a, const Stats& b )
 namespace stats
 {
     // The base stats added to every race.
-    Stats base = {{ 10, 10, 10, 10, 10 }};
+    Stats base = {{ 10, 10, 10, 10, 10, 10 }};
 
     // Racial stats.
-    Stats human  = Stats{{ 10,  5,  5,  0,  5 }} + base;
-    Stats kobold = Stats{{  0, -3, 10,  8,  5 }} + base;
-    Stats bear   = Stats{{ 30, 10, -5, -5,  0 }} + base;
+    Stats human  = Stats{{ 10,  5,  5,  0,  5,  -5 }} + base;
+    Stats kobold = Stats{{  0, -3, 10,  8,  5, -10 }} + base;
+    Stats bear   = Stats{{ 30, 10, -5, -5,  0,   1 }} + base;
     
     // Item stats.
-    Stats nothing = Stats{{ 0, 0,  0, 0, 0 }};
-    Stats stick   = Stats{{ 0, 5,  0, 0, 3 }};
+    Stats nothing = Stats{{ 0, 0,  0, 0, 0, 0 }};
+    Stats stick   = Stats{{ 0, 5,  0, 0, 3, 0 }};
 
     // Gives extra health, but slows its wielder.
-    Stats pillow  = Stats{{ 5, 1, -3, 0, 0 }};
+    Stats pillow  = Stats{{ 5, 1, -3, 0, 0, 2 }};
                           
     // A special item that makes one super-quick and accurate.
-    Stats thumbTack = Stats{{ 2, 0, 10, 10 }};
+    Stats thumbTack = Stats{{ 2, 0, 10, 10, -30 }};
 }
 
 struct ThingData
@@ -145,13 +146,27 @@ struct Actor
 
     Stats stats() const { return base + weapon().stats; }
 
+    bool in_inventory( II ii ) { return ii >= 0 and ii < inventory.size(); }
+
     void pickup( Item&& item ) { inventory.emplace_back( std::move(item) ); }
+    bool drop( II ii ) 
+    {
+        if( in_inventory(ii) ) {
+            if( wpn == ii )
+                unwield();
+            inventory.erase( std::begin(inventory) + ii );
+            return true;
+        }
+
+        return false;
+    }
+
 
     bool wielding() const { return wpn != -1; };
     bool unwield() { bool ret = wielding(); wpn = -1; return ret; }
     bool wield( II ii ) 
     {
-        if( ii >= 0 and ii < inventory.size() ) {
+        if( in_inventory(ii) ) {
             wpn = ii;
             return true;
         }
@@ -224,6 +239,7 @@ struct Action
         ATTACK,
         PICKUP,
         DROP,
+        EAT,
         QUIT
     } type;
 
@@ -441,6 +457,31 @@ int main()
             return 0;
         }
 
+        if( act.type == Action::EAT ) 
+        {
+            unsigned int ii = act.inventoryIndex;
+            if( actor->in_inventory(ii) ) {
+                Actor::Inventory& inv = actor->inventory;
+                const Stats& istats = inv[ii].stats;
+
+                int hpEffect = istats[HP] * istats[NUTRITION];
+                actor->hp = clamp( actor->hp+hpEffect, 0, actor->stats()[HP] );
+
+                if( actor == playeriter )
+                    msg::normal( "You eat the %s.", inv[ii].name.c_str() );
+
+                actor->drop( ii );
+
+                // Larger animals have more HP and take longer to eat.
+                actor->nextMove += 30 + istats[HP];
+
+                if( not actor->hp ) {
+                    expire( actor );
+                    continue;
+                }
+            } 
+        }
+
         /* 
          * Give the player a chance to make a different move if the selected
          * choice isn't valid. Doing this for NPCs too would cause an infinite
@@ -557,11 +598,8 @@ void update_map( const Vec& pos )
 bool drop( ActorList::iterator actor, unsigned int ii )
 {
     Actor::Inventory& inv = actor->inventory;
-    if( ii >= 0 and ii < inv.size() ) 
+    if( actor->in_inventory(ii) ) 
     {
-        if( ii == actor->wpn )
-            actor->unwield();
-
         const auto item = std::begin(inv) + ii;
 
         if( fov.isInFov(actor->pos.x(), actor->pos.y()) )
@@ -572,7 +610,7 @@ bool drop( ActorList::iterator actor, unsigned int ii )
             );
         
         items.emplace_back( std::move(*item), actor->pos );
-        inv.erase( item );
+        actor->drop( ii );
 
         return true;
     } 
@@ -761,7 +799,7 @@ Action move_player( Actor& player )
         {
             msg::special( "Equip what? (Type '.' (period) for nothing.)" );
             unsigned int ii = _render_inventory( player );
-            if( ii < player.inventory.size() and ii >= 0 ) 
+            if( player.in_inventory(ii) ) 
             {
                 player.wield( ii );
                 msg::special( "Eqipped %s.", player.weapon().name.c_str() );
@@ -775,6 +813,17 @@ Action move_player( Actor& player )
 
             return move_player( player );
         }
+
+      case 'E': // Eat
+        {
+            msg::special( "Eat what?" );
+            unsigned int ii = _render_inventory( player );
+            if( player.in_inventory(ii) )
+                return Action( Action::EAT, ii );
+
+            msg::normal( "You don't have that." );
+        }
+
 
       default: ;
     }
