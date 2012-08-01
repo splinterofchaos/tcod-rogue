@@ -147,13 +147,16 @@ struct Actor
     Stats stats() const { return base + weapon().stats; }
 
     bool in_inventory( II ii ) { return ii >= 0 and ii < inventory.size(); }
+    void clamp_hp() { if( hp > stats()[HP] ) hp = stats()[HP]; }
 
     void pickup( Item&& item ) { inventory.emplace_back( std::move(item) ); }
     bool drop( II ii ) 
     {
         if( in_inventory(ii) ) {
-            if( wpn == ii )
+            if( wpn == ii ) {
                 unwield();
+                clamp_hp();
+            }
             inventory.erase( std::begin(inventory) + ii );
             return true;
         }
@@ -163,11 +166,18 @@ struct Actor
 
 
     bool wielding() const { return wpn != -1; };
-    bool unwield() { bool ret = wielding(); wpn = -1; return ret; }
+    bool unwield() 
+    { 
+        bool ret = wielding(); 
+        wpn = -1; 
+        clamp_hp();
+        return ret;
+    }
     bool wield( II ii ) 
     {
         if( in_inventory(ii) ) {
             wpn = ii;
+            clamp_hp();
             return true;
         }
 
@@ -303,6 +313,17 @@ void expire( ActorList::iterator actor )
 {
     while( actor->inventory.size() ) drop( actor, 0 );
     if( actor == playeriter ) playeriter = std::end( actors );
+
+    const auto& raceiter = pure::find_if (
+        [&]( ThingData& race ) { return race.name == actor->race; },
+        races
+    );
+
+    if( raceiter != std::end(races) ) {
+        items.emplace_back( *raceiter, actor->pos );
+        items.back().symbol = '%';
+    }
+
     actors.erase( actor );
 }
 
