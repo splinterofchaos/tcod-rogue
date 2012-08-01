@@ -239,6 +239,10 @@ Action move_monst( Actor& );
 /* Simulate attack and print a message. Return true on kill. */ 
 bool attack( const Actor& aggressor, Actor& victim );
 
+/* Drop actor->inventory[i], if exists. Returns true on success. */
+bool drop( ActorList::iterator actor, unsigned int ii );
+bool drop_weapon( ActorList::iterator actor );
+
 /* Inventory Index to Char. */
 char iitoc( unsigned int i ) { return 'a' + i; }
 /* Char to Inventory Index. */
@@ -258,6 +262,15 @@ ItemList::iterator item_at( const Vec& pos )
         [&](const MapItem& item){ return item.pos == pos; },
         items
     );
+}
+
+/* Expire: Drop all items. Remove from actors list. */
+void expire( ActorList::iterator actor )
+{
+    while( actor->inventory.size() ) drop( actor, 0 );
+    drop_weapon( actor );
+    if( actor == playeriter ) playeriter = std::end( actors );
+    actors.erase( actor );
 }
 
 bool walkable( const Vec& pos )
@@ -367,12 +380,10 @@ int main()
             auto target = actor_at( act.pos );
             if( target != std::end(actors) ) 
             {
-                if( attack(*actor,*target) ) {
-                    if( target == playeriter )
-                        playeriter = std::end( actors );
-                    actors.erase( target );
-                }
-            } 
+                bool killed = attack( *actor, *target );
+                if( killed )
+                    expire( target );
+            }
             else
             {
                 actor->pos = act.pos;
@@ -406,19 +417,7 @@ int main()
         }
 
         if( act.type == Action::DROP )
-        {
-            if( act.inventoryIndex < actor->inventory.size() ) {
-                const auto item =
-                    actor->inventory.begin() + act.inventoryIndex;
-
-                msg::normal( "You dropped your %s.", item->name.c_str() );
-
-                items.emplace_back( std::move(*item), actor->pos );
-                actor->inventory.erase( item );
-            } else if( actor == playeriter ) {
-                msg::normal( "You don't have that!" );
-            }
-        }
+            drop( actor, act.inventoryIndex );
 
         if( act.type == Action::QUIT ) {
             printf( "QUIT received.\n" );
@@ -506,7 +505,7 @@ void generate_grid()
             raceIter = std::begin( races );
         
         actor.base = raceIter->stats;
-        actor.hp    = actor.stats()[HP];
+        actor.hp   = actor.stats()[HP];
     }
 
     if( actors.size() == 0 )
@@ -535,6 +534,49 @@ void update_map( const Vec& pos )
 {
     fov.computeFov( pos.x(), pos.y(), 10, true, FOV_PERMISSIVE_4 );
     playerDistance.compute( pos.x(), pos.y() );
+}
+
+bool drop( ActorList::iterator actor, unsigned int ii )
+{
+    Actor::Inventory& inv = actor->inventory;
+    if( ii >= 0 and ii < inv.size() ) 
+    {
+        const auto item = std::begin(inv) + ii;
+
+        if( fov.isInFov(actor->pos.x(), actor->pos.y()) )
+            msg::normal ( 
+                "%s dropped the %s", 
+                actor == playeriter ? "You" : actor->name.c_str(),
+                item->name.c_str() 
+            );
+        
+        items.emplace_back( std::move(*item), actor->pos );
+        inv.erase( item );
+
+        return true;
+    } 
+    else if( actor == playeriter ) 
+    {
+        msg::normal( "You don't have that!" );
+    }
+
+    return false;
+}
+
+bool drop_weapon( ActorList::iterator actor )
+{
+    if( actor->weapon.name == "fist" )
+        return false;
+    
+    if( actor != playeriter 
+        and fov.isInFov(actor->pos.x(), actor->pos.y()) )
+        msg::combat( "%s has dropped %s.", 
+                     actor->name.c_str(), actor->weapon.name.c_str() );
+
+    items.emplace_back( std::move(actor->weapon), actor->pos );
+    actor->weapon = fist();
+
+    return true;
 }
 
 void _look_loop( const Actor& player )
