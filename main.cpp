@@ -42,25 +42,34 @@ Stats operator/( const Stats& a, const Stats& b )
 
 namespace stats
 {
-    // The base stats added to everything.
-    Stats base = { 10, 10, 10, 10, 10 };
+    // The base stats added to every race.
+    Stats base = {{ 10, 10, 10, 10, 10 }};
 
     // Racial stats.
-    Stats human  = Stats{ 10,  5,  5,  0,  5 } + base;
-    Stats kobold = Stats{  0, -3, 10,  8,  5 } + base;
-    Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
+    Stats human  = Stats{{ 10,  5,  5,  0,  5 }} + base;
+    Stats kobold = Stats{{  0, -3, 10,  8,  5 }} + base;
+    Stats bear   = Stats{{ 30, 10, -5, -5,  0 }} + base;
     
     // Item stats.
-    Stats stick  = Stats{ 0, 5, 0, 0, 3 };
-    Stats pillow = Stats{ 3, 1, 0, 0, 0 };
+    Stats nothing = Stats{{ 0, 0,  0, 0, 0 }};
+    Stats stick   = Stats{{ 0, 5,  0, 0, 3 }};
+
+    // Gives extra health, but slows its wielder.
+    Stats pillow  = Stats{{ 5, 1, -3, 0, 0 }};
+                          
+    // A special item that makes one super-quick and accurate.
+    Stats thumbTack = Stats{{ 2, 0, 10, 10 }};
 }
 
 struct ThingData
 {
-    const char* const name;
+    const char* name;
     char symbol; // Thing's image.
     TCODColor color;
     Stats stats;
+
+    // At what levels this thing will spawn (inclusive).
+    int minlvl, maxlvl; // {-1,-1} means never spawn naturally.
 };   
 
 /* 
@@ -75,14 +84,16 @@ bool operator == ( const std::string& name, const ThingData& r )
 { return r == name; }
 
 std::vector< ThingData > catalogue = {
-    { "stick",  '/', TCODColor(200,150, 100), stats::stick  },
-    { "pillow", '+', TCODColor::white,        stats::pillow }
+    { "fist",    ' ', TCODColor::black,        stats::nothing,   -1, -1 },
+    { "stick",   '/', TCODColor(200,150, 100), stats::stick,      0, 10 },
+    { "pillow",  '-', TCODColor::white,        stats::pillow,     0, 10 },
+    { "thumb tack", '-', TCODColor::green,     stats::thumbTack, -1, -1 }
 };
 
 std::vector< ThingData > races = {
-    { "human",  '@', TCODColor(200,150, 50), stats::human  },
-    { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
-    { "bear",   'B', TCODColor(250,250,100), stats::bear   }
+    { "human",  '@', TCODColor(200,150, 50), stats::human,  0, 10 },
+    { "kobold", 'K', TCODColor(100,200,100), stats::kobold, 0, 10 },
+    { "bear",   'B', TCODColor(250,250,100), stats::bear,   0, 10 }
 };
 
 struct Item
@@ -90,7 +101,15 @@ struct Item
     std::string name;
     char symbol;
     Stats stats;
+
+    Item() { }
+    Item( const ThingData& data )
+        : name( data.name ), symbol( data.symbol ), stats( data.stats )
+    {
+    }
 };
+
+Item fist() { return Item(catalogue[0]); }
 
 struct MapItem : Item
 {
@@ -108,7 +127,7 @@ struct Actor
     std::string name;
     std::string race;
     Vec pos;
-    Stats stats;
+    Stats base;
     int hp;
     int nextMove;
 
@@ -120,7 +139,10 @@ struct Actor
     Actor()
     {
         nextMove = 0;
+        weapon = fist();
     }
+
+    Stats stats() const { return base + weapon.stats; }
 };
 
 typedef std::list<Actor> ActorList;
@@ -252,6 +274,10 @@ int clamp( int x, int min, int max )
     return x;
 }
 
+template< class C/*ontainer*/ >
+auto random_select( C&& c ) -> decltype( c[0] )
+{ return c[ random(0, c.size()-1) ]; }
+
 int main()
 {
     TCODConsole::initRoot( mapDims.x(), mapDims.y(), "test rogue" );
@@ -354,7 +380,7 @@ int main()
                     update_map( actor->pos );
             }
 
-            actor->nextMove += 50 - actor->stats[AGILITY];
+            actor->nextMove += 50 - actor->stats()[AGILITY];
         }
 
         if( act.type == Action::PICKUP ) 
@@ -371,7 +397,7 @@ int main()
                                  actor->name.c_str(), item->name.c_str() );
 
                 items.erase( item );
-                actor->nextMove += 30 - actor->stats[AGILITY];
+                actor->nextMove += 30 - actor->stats()[AGILITY];
             } 
             else if( actor == playeriter ) 
             {
@@ -414,7 +440,7 @@ int main()
         // Don't let a turn go on infinitely. 
         // NPC didn't move or actor is waiting.
         if( actor->nextMove == time )
-            actor->nextMove += actor->stats[AGILITY]/2;
+            actor->nextMove += actor->stats()[AGILITY]/2;
     }
 
     if( playeriter == std::end(actors) )
@@ -445,6 +471,12 @@ void generate_grid()
         std::copy_n( line, grid.width, grid.row_begin(y) );
     }
 
+    // Look for items available at this level.
+    auto availableItems = pure::filter (
+        []( const ThingData& item ) { return item.minlvl >= 0; },
+        catalogue
+    );
+
     // Read spawn points.
     char spawnpt[50];
     unsigned int nspawns = 10;
@@ -463,8 +495,9 @@ void generate_grid()
             actor.race = "human";
             playeriter = std::begin( actors );
         } else {
-            actor.race = races[ random(0, races.size()-1) ].name;
+            actor.race = random_select(races).name;
             actor.name = "the " + actor.race;
+            actor.weapon = random_select(availableItems);
         }
 
         auto raceIter = pure::find( actor.race, races );
@@ -472,22 +505,17 @@ void generate_grid()
             // This should never happen, but if it does...
             raceIter = std::begin( races );
         
-        actor.stats = raceIter->stats;
-        actor.hp    = actor.stats[HP];
+        actor.base = raceIter->stats;
+        actor.hp    = actor.stats()[HP];
     }
 
     if( actors.size() == 0 )
         die( "No spawn point!" );
 
     while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
-        items.push_back( MapItem() );
+        items.emplace_back( random_select(availableItems), Vec(0,0) );
         MapItem& item = items.back();
         sscanf( spawnpt, "X %u %u", &item.pos.x(), &item.pos.y() );
-
-        const ThingData& data = catalogue[ random(0, catalogue.size()-1) ];
-        item.name  = data.name;
-        item.stats = data.stats;
-        item.symbol = data.symbol;
     }
 
     pclose( mapgen );
@@ -703,8 +731,8 @@ Action move_monst( Actor& monst )
 
 bool attack( const Actor& aggressor, Actor& victim )
 {
-    const Stats& as = aggressor.stats;
-    const Stats& vs = victim.stats;
+    Stats as = aggressor.stats();
+    const Stats& vs = victim.stats();
 
     const char* const HIT    = "hit";
     const char* const DODGED = "dodged";
@@ -741,15 +769,16 @@ bool attack( const Actor& aggressor, Actor& victim )
         }
     } 
 
-    if( verb != DODGED ) {
-        msg::combat( "%s %s %s%c", 
-                     aggressor.name.c_str(), verb, victim.name.c_str(),
-                     criticalHit ? '!' : '.' );
+    if( verb == DODGED ) {
+        msg::combat( "%s dodged %s's %s.", 
+                     victim.name.c_str(), aggressor.name.c_str(),
+                     aggressor.weapon.name.c_str() );
     } else {
-        // "the aggressor dodged the victim" doesn't make sense, 
-        // so do something different for dodging.
-        msg::combat( "%s dodged %s's attack.", 
-                     victim.name.c_str(), aggressor.name.c_str() );
+        msg::combat( "%s's %s %s %s%c", // "attacker's wpn (hit/missed) who(./!)"
+                     aggressor.name.c_str(), aggressor.weapon.name.c_str(),
+                     verb, 
+                     victim.name.c_str(),
+                     criticalHit ? '!' : '.' );
     }
 
     return verb == KILLED;
@@ -887,13 +916,14 @@ void render()
         overlay.setDefaultBackground( TCODColor::red );
         overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
-            (float(playeriter->hp)/playeriter->stats[HP]) * (grid.width/2);
+            (float(playeriter->hp)/playeriter->stats()[HP]) * (grid.width/2);
         overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
         char* healthInfo;
-        asprintf( &healthInfo, healthFmt, playeriter->hp, playeriter->stats[HP] );
+        asprintf( &healthInfo, healthFmt, 
+                  playeriter->hp, playeriter->stats()[HP] );
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
