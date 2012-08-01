@@ -95,6 +95,12 @@ struct Item
 struct MapItem : Item
 {
     Vec pos;
+
+    MapItem() {}
+    MapItem( const Item& item, const Vec& pos )
+        : Item( item ), pos( pos ) { }
+    MapItem( Item&& item, const Vec& pos )
+        : Item( std::move(item) ), pos( pos ) { }
 };
 
 struct Actor
@@ -106,7 +112,8 @@ struct Actor
     int hp;
     int nextMove;
 
-    std::vector<Item> inventory;
+    typedef std::vector<Item> Inventory;
+    Inventory inventory;
 
     Item weapon;
 
@@ -182,10 +189,17 @@ struct Action
     // If type=MOVE/ATTACK, holds the destination.
     Vec pos;
 
+    unsigned int inventoryIndex;
+
     Action() : type(WAIT) {} 
 
     Action( Type type, Vec pos=Vec(0,0) )
         : type( type ), pos( pos )
+    {
+    }
+
+    Action( Type type, unsigned int ii )
+        : type( type ), inventoryIndex( ii )
     {
     }
 };
@@ -202,6 +216,11 @@ Action move_monst( Actor& );
 
 /* Simulate attack and print a message. Return true on kill. */ 
 bool attack( const Actor& aggressor, Actor& victim );
+
+/* Inventory Index to Char. */
+char iitoc( unsigned int i ) { return 'a' + i; }
+/* Char to Inventory Index. */
+unsigned int ctoii( char c ) { return c - 'a'; }
 
 ActorList::iterator actor_at( const Vec& pos )
 {
@@ -357,6 +376,21 @@ int main()
             else if( actor == playeriter ) 
             {
                 msg::normal( "Nothing here to pick up." );
+            }
+        }
+
+        if( act.type == Action::DROP )
+        {
+            if( act.inventoryIndex < actor->inventory.size() ) {
+                const auto item =
+                    actor->inventory.begin() + act.inventoryIndex;
+
+                msg::normal( "You dropped your %s.", item->name.c_str() );
+
+                items.emplace_back( std::move(*item), actor->pos );
+                actor->inventory.erase( item );
+            } else if( actor == playeriter ) {
+                msg::normal( "You don't have that!" );
             }
         }
 
@@ -551,13 +585,18 @@ void _look_loop( const Actor& player )
     }
 }
 
-void _inventory_mode( const Actor& player )
+/* 
+ * Render the inventory; wait for key press.
+ * Returns an inventory index, assuming the player hit a key corresponding to a
+ * held item.
+ */
+int _render_inventory( const Actor& player )
 {
     if( not player.inventory.size() )
     {
         msg::normal( "You don't have anything." );
         render();
-        return;
+        return -1;
     }
 
     TCODConsole invcons( grid.width/2, player.inventory.size() + 1 );
@@ -565,7 +604,7 @@ void _inventory_mode( const Actor& player )
     for( const Item& i : player.inventory ) 
     {
         char* row = nullptr;
-        asprintf( &row, "%c - (%c)%s", y+'a', i.symbol, i.name.c_str() );
+        asprintf( &row, "%c - (%c)%s", iitoc(y), i.symbol, i.name.c_str() );
         invcons.print( 0, y++, row );
         if( row ) free( row );
     }
@@ -584,9 +623,11 @@ void _inventory_mode( const Actor& player )
     // Show the inventory (printed to overlay).
     render();
     // Wait for the player to finish reading.
-    next_pressed_key();
+    int k = next_pressed_key();
     // Erase the inventory.
     render();
+
+    return ctoii( k );
 }
 
 
@@ -613,11 +654,26 @@ Action move_player( Actor& player )
       case 'L': _look_loop( player ); 
                 return move_player(player);
 
-      case 'i':  _inventory_mode( player ); 
+      case 'i':  _render_inventory( player ); 
                  return move_player(player);
 
       case 'g': return Action::PICKUP;
-      case 'd': return Action::DROP;
+      // Drop
+      case 'd': 
+        {
+            msg::special( "Pick an item." );
+            // _render_inventory will display this message and return an
+            // inventory index.
+            int ii = _render_inventory( player );
+
+            if( ii < player.inventory.size() and ii >= 0 ) {
+                return Action( Action::DROP, ii );
+            } else {
+                msg::normal( "You don't have that!", ii );
+                render();
+                return move_player( player );
+            }
+        }
 
       default: ;
     }
