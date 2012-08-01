@@ -700,7 +700,6 @@ int _render_inventory( const Actor& player )
     return ctoii( k );
 }
 
-
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -728,8 +727,8 @@ Action move_player( Actor& player )
                  return move_player(player);
 
       case 'g': return Action::PICKUP;
-      // Drop
-      case 'd': 
+
+      case 'd': // Drop
         {
             msg::special( "Pick an item." );
             // _render_inventory will display this message and return an
@@ -743,6 +742,20 @@ Action move_player( Actor& player )
                 render();
                 return move_player( player );
             }
+        }
+
+      case 'e': // Equip
+        {
+            msg::special( "Equip what?" );
+            unsigned int ii = _render_inventory( player );
+            if( ii < player.inventory.size() and ii >= 0 ) {
+                player.weapon = std::move( player.inventory[ii] );
+                player.inventory.erase( player.inventory.begin() + ii );
+                msg::special( "Eqipped %s.", player.weapon.name.c_str() );
+                render();
+            }
+
+            return move_player( player );
         }
 
       default: ;
