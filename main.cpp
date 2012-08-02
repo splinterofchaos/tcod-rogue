@@ -136,27 +136,24 @@ struct Actor
     typedef Inventory::size_type II; // Inventory Index.
     Inventory inventory;
 
-    II wpn;
+    // Slot A
+    Item weapon;
 
     Actor()
     {
         nextMove = 0;
-        wpn = -1;
+        weapon = FIST;
     }
 
-    Stats stats() const { return base + weapon().stats; }
+    Stats stats() const { return base + weapon.stats; }
 
-    bool in_inventory( II ii ) { return ii >= 0 and ii < inventory.size(); }
+    bool in_inventory( II ii ) { return ii < inventory.size(); }
     void clamp_hp() { if( hp > stats()[HP] ) hp = stats()[HP]; }
 
     void pickup( Item&& item ) { inventory.emplace_back( std::move(item) ); }
     bool drop( II ii ) 
     {
         if( in_inventory(ii) ) {
-            if( wpn == ii ) {
-                unwield();
-                clamp_hp();
-            }
             inventory.erase( std::begin(inventory) + ii );
             return true;
         }
@@ -165,26 +162,32 @@ struct Actor
     }
 
 
-    bool wielding() const { return wpn != -1; };
+    bool wielding() const { return weapon.name != "fist"; }
     bool unwield() 
     { 
-        bool ret = wielding(); 
-        wpn = -1; 
-        clamp_hp();
+        bool ret;
+        if( (ret = wielding()) ) {
+            pickup( std::move(weapon) );
+            weapon = FIST;
+            clamp_hp();
+        }
         return ret;
     }
     bool wield( II ii ) 
     {
-        if( in_inventory(ii) ) {
-            wpn = ii;
+        bool ret;
+        if( (ret = in_inventory(ii)) ) {
+            if( wielding() ) unwield();
+
+            auto it = std::begin(inventory) + ii;
+            weapon = std::move( *it );
+            inventory.erase( it );
+
             clamp_hp();
-            return true;
         }
 
-        return false;
+        return ret;
     }
-
-    const Item& weapon() const { return wielding() ? inventory[wpn] : FIST; }
 };
 
 const Item Actor::FIST = Item( catalogue[0] );
@@ -308,12 +311,16 @@ ItemList::iterator item_at( const Vec& pos )
     );
 }
 
-/* Expire: Drop all items. Remove from actors list. */
+/* Expire: Drop all items. Remove from actors list. Become a corpse. */
 void expire( ActorList::iterator actor )
 {
-    while( actor->inventory.size() ) drop( actor, 0 );
     if( actor == playeriter ) playeriter = std::end( actors );
 
+    // Move weapon to inventory; drop inventory.
+    if( actor->wielding() ) actor->unwield();
+    while( actor->inventory.size() ) drop( actor, 0 );
+
+    // Create a corpse based on the dead actor's race.
     const auto& raceiter = pure::find_if (
         [&]( ThingData& race ) { return race.name == actor->race; },
         races
@@ -731,33 +738,31 @@ int _render_inventory( const Actor& player )
     if( not player.inventory.size() )
         msg::normal( "You don't have anything." );
 
-    TCODConsole invcons( grid.width/2, player.inventory.size() + 2 );
-    unsigned int y = 0;
-    for( const Item& i : player.inventory ) 
+    TCODConsole invcons( grid.width/2, player.inventory.size() + 3 );
+
+    // Number of lines before inventory proper. 
+    unsigned int heading = 0;
+
+    if( player.wielding() )
     {
-        const char* fmt;
+        heading = 1;
 
-        if( y == player.wpn ) {
-            invcons.setDefaultForeground( TCODColor::green );
-            fmt = "%c - (%c)%s -- equipped";
-        } else {
-            invcons.setDefaultForeground( TCODColor::white );
-            fmt = "%c - (%c)%s";
-        }
-
-        char* row = nullptr;
-        asprintf( &row, fmt, iitoc(y), i.symbol, i.name.c_str() );
-
-        invcons.print( 0, y++, row );
-
-        if( row ) free( row );
+        invcons.setDefaultForeground( TCODColor::green );
+        invcons.print( 0, heading++, "A - (%c)%s -- wielded.",
+                       player.weapon.symbol, player.weapon.name.c_str() );
     }
 
+    unsigned int y = 0;
+    invcons.setDefaultForeground( TCODColor::white );
+    for( const Item& i : player.inventory ) 
+        invcons.print( 0, heading + y++, 
+                       "%c - (%c)%s", iitoc(y), i.symbol, i.name.c_str() );
+
     invcons.setDefaultForeground( TCODColor::red );
-    invcons.print( 0, y, "Press any key." );
+    invcons.print( 0, heading + y, "Press any key." );
 
     TCODConsole::blit (
-        &invcons, 0, 0, invcons.getWidth(), invcons.getHeight(),
+        &invcons, 0, 0, invcons.getWidth(), heading + y,
         &overlay,
         // Draw centered.
         grid.width  / 2 - invcons.getWidth()  / 2, 
@@ -825,7 +830,7 @@ Action move_player( Actor& player )
             if( player.in_inventory(ii) ) 
             {
                 player.wield( ii );
-                msg::special( "Eqipped %s.", player.weapon().name.c_str() );
+                msg::special( "Eqipped %s.", player.weapon.name.c_str() );
                 render();
             } 
             else if( ii == ctoii('.') )
@@ -917,10 +922,10 @@ bool attack( const Actor& aggressor, Actor& victim )
     if( verb == DODGED ) {
         msg::combat( "%s dodged %s's %s.", 
                      victim.name.c_str(), aggressor.name.c_str(),
-                     aggressor.weapon().name.c_str() );
+                     aggressor.weapon.name.c_str() );
     } else {
         msg::combat( "%s's %s %s %s%c", // "attacker's wpn (hit/missed) who(./!)"
-                     aggressor.name.c_str(), aggressor.weapon().name.c_str(),
+                     aggressor.name.c_str(), aggressor.weapon.name.c_str(),
                      verb, 
                      victim.name.c_str(),
                      criticalHit ? '!' : '.' );
