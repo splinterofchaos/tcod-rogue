@@ -411,52 +411,54 @@ void _look_loop( const Actor& player )
     while( true )
     {
         playerDistance.setPath( lpos.x(), lpos.y() );
+        Tile& t = grid.get( lpos );
 
-        Vec pos = lpos;
-        do {
+        // Highlight the path from the cursor to the player.
+        // Iterate only once if the player hasn't discovered this tile.
+        Vec pos = lpos; do {
             grid.get(pos).highlight = true;
             playerDistance.walk( &pos.x(), &pos.y() );
-        } while( playerDistance.size() > 0 );
+        } while( playerDistance.size() > 0 and t.seen );
 
         // Loop terminates before highlighting player's position.
         grid.get(player.pos).highlight = true;
 
         // Tell the player what they're looking at.
-        if( grid.get(lpos).visible )
-        {
-            const int INFO_LEN = 20;
-            std::string info;
+        const int INFO_LEN = 20;
+        std::string info;
 
-            switch( grid.get(lpos).c ) {
-              case '.': info = "A stone floor."; break;
-              case '#': info = "A stone wall."; break;
-            }
-
-            ActorList::iterator actor;
-            if( (actor = actor_at(lpos)) != std::end(actors) ) {
-                char cinfo[INFO_LEN];
-                if( actor == playeriter )
-                    sprintf( cinfo, "It's you!" );
-                else
-                    sprintf( cinfo, "You see %s.", actor->name.c_str() );
-                info = cinfo;
-            }
-
-            static TCODConsole infobox(INFO_LEN,1);
-
-            infobox.setDefaultForeground( TCODColor::green );
-            infobox.print( 0, 0, info.c_str() );
-
-            TCODConsole::blit (
-                &infobox, 0, 0, info.size(), 1,
-                &overlay, 
-                // Draw it centered on the x-axis
-                clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
-                // and just above or below on the y-axis.
-                lpos.y() + (lpos.y() > 3 ? -2 : +2),
-                1, 0.5f
-            );
+        switch( t.c ) {
+          case '.': info = "A stone floor."; break;
+          case '#': info = "A stone wall."; break;
         }
+
+        ActorList::iterator actor;
+        if( t.visible and (actor=actor_at(lpos)) != std::end(actors) ) {
+            char cinfo[INFO_LEN];
+            if( actor == playeriter )
+                sprintf( cinfo, "It's you!" );
+            else
+                sprintf( cinfo, "You see %s.", actor->name.c_str() );
+            info = cinfo;
+        }
+
+        if( not t.seen )
+            info = "(undiscovered)";
+
+        static TCODConsole infobox(INFO_LEN,1);
+
+        infobox.setDefaultForeground( TCODColor::green );
+        infobox.print( 0, 0, info.c_str() );
+
+        TCODConsole::blit (
+            &infobox, 0, 0, info.size(), 1,
+            &overlay, 
+            // Draw centered on the x-axis
+            clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
+            // and just above or below on the y-axis.
+            lpos.y() + (lpos.y() > 3 ? -2 : +2),
+            1, 0.5f
+        );
 
         render();
 
@@ -590,9 +592,11 @@ void render()
         for( unsigned int y=0; y < grid.height; y++ ) 
         {
             /*
-             * Draw any tile, except those the player hasn't discovered, but
-             * color them according to whether they can be seen now, or have
-             * been seen.
+             * Draw any tile, except those the player hasn't discovered.
+             * color them according to whether or not:
+             *  they can be seen now (visible),
+             *  have been discovered (seen),
+             *  is highlighted (highlight).
              */
             Tile& t = grid.get( x, y );
 
@@ -601,9 +605,19 @@ void render()
             else
                 t.visible = false;
 
-            if( not t.seen )
-                // Not in view, nor discovered.
+            // Not in view, nor discovered.
+            if( not t.seen ) { 
+                // Player may be looking at this tile. 
+                if( t.highlight ) {
+                    // Print the cursor.
+                    overlay.setChar( x, y, 'X' );
+                    overlay.setCharForeground( x, y, TCODColor::black );
+                    overlay.setCharBackground( x, y, TCODColor::grey );
+                    t.highlight = false;
+                }
+
                 continue;
+            }
 
             TCODConsole::root->setChar( x, y, t.c );
 
@@ -629,11 +643,14 @@ void render()
                 }
             }
 
+            float light = 1.0f;
             if( t.highlight ) {
-                bg = bg * 1.5;
-                fg = fg * 1.5;
                 t.highlight = false;
+                light = t.visible ? 1.5f : 3.f;
             }
+
+            bg = bg * light;
+            fg = fg * light;
 
             TCODConsole::root->setCharForeground( x, y, fg );
             TCODConsole::root->setCharBackground( x, y, bg );
