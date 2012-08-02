@@ -26,6 +26,7 @@ enum StatType {
     AGILITY,
     DEXTERITY,
     ACCURACY,
+    NUTRITION, 
     N_STATS
 };
 
@@ -42,58 +43,159 @@ Stats operator/( const Stats& a, const Stats& b )
 
 namespace stats
 {
-    // The base stats added to everything.
-    Stats base = { 10, 10, 10, 10, 10 };
+    // The base stats added to every race.
+    Stats base = {{ 10, 10, 10, 10, 10, 10 }};
 
     // Racial stats.
-    Stats human  = Stats{ 10,  5,  5,  0,  5 } + base;
-    Stats kobold = Stats{  0, -3, 10,  8,  5 } + base;
-    Stats bear   = Stats{ 30, 10, -5, -5,  0 } + base;
+    Stats human  = Stats{{ 10,  5,  5,  0,  5,  -5 }} + base;
+    Stats kobold = Stats{{  0, -3, 10,  8,  5, -10 }} + base;
+    Stats bear   = Stats{{ 30, 10, -5, -5,  0,   1 }} + base;
+    
+    // Item stats.
+    Stats nothing = Stats{{ 0, 0,  0, 0, 0, 0 }};
+    Stats stick   = Stats{{ 0, 5,  0, 0, 3, 0 }};
+
+    // Gives extra health, but slows its wielder.
+    Stats pillow  = Stats{{ 5, 1, -3, 0, 0, 2 }};
+                          
+    // A special item that makes one super-quick and accurate.
+    Stats thumbTack = Stats{{ 2, 0, 10, 10, -30 }};
 }
 
-struct Race
+struct ThingData
 {
-    const char* const name;
-    char symbol; // Race's image.
+    const char* name;
+    char symbol; // Thing's image.
     TCODColor color;
     Stats stats;
+
+    // At what levels this thing will spawn (inclusive).
+    int minlvl, maxlvl; // {-1,-1} means never spawn naturally.
 };   
 
 /* 
- * Racial equality!
- * Assume that two different races have different names and two races with the
- * same name have the same attributes.
+ * Assume that two different things have different names and two things with
+ * the same name have the same attributes.
  */
-bool operator == ( const Race& r1, const Race& r2 )
+bool operator == ( const ThingData& r1, const ThingData& r2 )
 { return r1.name == r2.name; }
-bool operator == ( const Race& r, const std::string& name )
+bool operator == ( const ThingData& r, const std::string& name )
 { return r.name == name; }
-bool operator == ( const std::string& name, const Race& r )
+bool operator == ( const std::string& name, const ThingData& r )
 { return r == name; }
 
-std::vector< Race > races = {
-    { "human",  '@', TCODColor(200,150, 50), stats::human  },
-    { "kobold", 'K', TCODColor(100,200,100), stats::kobold },
-    { "bear",   'B', TCODColor(250,250,100), stats::bear   }
+std::vector< ThingData > catalogue = {
+    { "fist",    ' ', TCODColor::black,        stats::nothing,   -1, -1 },
+    { "stick",   '/', TCODColor(200,150, 100), stats::stick,      0, 10 },
+    { "pillow",  '-', TCODColor::white,        stats::pillow,     0, 10 },
+    { "thumb tack", '-', TCODColor::green,     stats::thumbTack, -1, -1 }
+};
+
+std::vector< ThingData > races = {
+    { "human",  '@', TCODColor(200,150, 50), stats::human,  0, 10 },
+    { "kobold", 'K', TCODColor(100,200,100), stats::kobold, 0, 10 },
+    { "bear",   'B', TCODColor(250,250,100), stats::bear,   0, 10 }
+};
+
+struct Item
+{
+    std::string name;
+    char symbol;
+    Stats stats;
+
+    Item() { }
+    Item( const ThingData& data )
+        : name( data.name ), symbol( data.symbol ), stats( data.stats )
+    {
+    }
+};
+
+struct MapItem : Item
+{
+    Vec pos;
+
+    MapItem() {}
+    MapItem( const Item& item, const Vec& pos )
+        : Item( item ), pos( pos ) { }
+    MapItem( Item&& item, const Vec& pos )
+        : Item( std::move(item) ), pos( pos ) { }
 };
 
 struct Actor
 {
+    static const Item FIST;
+
     std::string name;
     std::string race;
     Vec pos;
-    Stats stats;
+    Stats base;
     int hp;
     int nextMove;
+
+    typedef std::vector<Item> Inventory;
+    typedef Inventory::size_type II; // Inventory Index.
+    Inventory inventory;
+
+    // Slot A
+    Item weapon;
 
     Actor()
     {
         nextMove = 0;
+        weapon = FIST;
+    }
+
+    Stats stats() const { return base + weapon.stats; }
+
+    bool in_inventory( II ii ) { return ii < inventory.size(); }
+    void clamp_hp() { if( hp > stats()[HP] ) hp = stats()[HP]; }
+
+    void pickup( Item&& item ) { inventory.emplace_back( std::move(item) ); }
+    bool drop( II ii ) 
+    {
+        if( in_inventory(ii) ) {
+            inventory.erase( std::begin(inventory) + ii );
+            return true;
+        }
+
+        return false;
+    }
+
+
+    bool wielding() const { return weapon.name != "fist"; }
+    bool unwield() 
+    { 
+        bool ret;
+        if( (ret = wielding()) ) {
+            pickup( std::move(weapon) );
+            weapon = FIST;
+            clamp_hp();
+        }
+        return ret;
+    }
+    bool wield( II ii ) 
+    {
+        bool ret;
+        if( (ret = in_inventory(ii)) ) {
+            if( wielding() ) unwield();
+
+            auto it = std::begin(inventory) + ii;
+            weapon = std::move( *it );
+            inventory.erase( it );
+
+            clamp_hp();
+        }
+
+        return ret;
     }
 };
 
+const Item Actor::FIST = Item( catalogue[0] );
+
 typedef std::list<Actor> ActorList;
+typedef std::list<MapItem> ItemList;
 ActorList actors;
+ItemList  items;
 
 ActorList::iterator playeriter = std::end(actors);
 std::string playerName;
@@ -148,16 +250,26 @@ struct Action
         MOVE,
         WAIT,
         ATTACK,
+        PICKUP,
+        DROP,
+        EAT,
         QUIT
     } type;
 
     // If type=MOVE/ATTACK, holds the destination.
     Vec pos;
 
+    unsigned int inventoryIndex;
+
     Action() : type(WAIT) {} 
 
     Action( Type type, Vec pos=Vec(0,0) )
         : type( type ), pos( pos )
+    {
+    }
+
+    Action( Type type, unsigned int ii )
+        : type( type ), inventoryIndex( ii )
     {
     }
 };
@@ -175,12 +287,53 @@ Action move_monst( Actor& );
 /* Simulate attack and print a message. Return true on kill. */ 
 bool attack( const Actor& aggressor, Actor& victim );
 
+/* Drop actor->inventory[i], if exists. Returns true on success. */
+bool drop( ActorList::iterator actor, unsigned int ii );
+
+/* Inventory Index to Char. */
+char iitoc( unsigned int i ) { return 'a' + i; }
+/* Char to Inventory Index. */
+unsigned int ctoii( char c ) { return c - 'a'; }
+
 ActorList::iterator actor_at( const Vec& pos )
 {
     return pure::find_if ( 
         [&](const Actor& aptr) { return aptr.pos == pos; },
         actors
     );
+}
+
+ItemList::iterator item_at( const Vec& pos )
+{
+    return pure::find_if (
+        [&](const MapItem& item){ return item.pos == pos; },
+        items
+    );
+}
+
+/* Expire: Drop all items. Remove from actors list. Become a corpse. */
+void expire( ActorList::iterator actor )
+{
+    if( actor == playeriter ) playeriter = std::end( actors );
+
+    // Move weapon to inventory; drop inventory.
+    if( actor->wielding() ) actor->unwield();
+    while( actor->inventory.size() ) drop( actor, 0 );
+
+    // Create a corpse based on the dead actor's race.
+    const auto& raceiter = pure::find_if (
+        [&]( ThingData& race ) { return race.name == actor->race; },
+        races
+    );
+
+    if( raceiter != std::end(races) ) {
+        items.emplace_back( *raceiter, actor->pos );
+        Item& i = items.back();
+        i.symbol = '%';
+        i.name = i.name + " corpse";
+    }
+
+    actors.erase( actor );
 }
 
 bool walkable( const Vec& pos )
@@ -196,6 +349,10 @@ int clamp( int x, int min, int max )
     else if( x > max ) x = max;
     return x;
 }
+
+template< class C/*ontainer*/ >
+auto random_select( C&& c ) -> decltype( c[0] )
+{ return c[ random(0, c.size()-1) ]; }
 
 int main()
 {
@@ -286,12 +443,10 @@ int main()
             auto target = actor_at( act.pos );
             if( target != std::end(actors) ) 
             {
-                if( attack(*actor,*target) ) {
-                    if( target == playeriter )
-                        playeriter = std::end( actors );
-                    actors.erase( target );
-                }
-            } 
+                bool killed = attack( *actor, *target );
+                if( killed )
+                    expire( target );
+            }
             else
             {
                 actor->pos = act.pos;
@@ -299,12 +454,62 @@ int main()
                     update_map( actor->pos );
             }
 
-            actor->nextMove += 30 - actor->stats[AGILITY];
+            actor->nextMove += 50 - actor->stats()[AGILITY];
         }
+
+        if( act.type == Action::PICKUP ) 
+        {
+            auto item = item_at( actor->pos );
+            if( item != std::end(items) ) 
+            {
+                actor->inventory.push_back( *item );
+
+                if( actor == playeriter )
+                    msg::normal( "Got %s.", item->name.c_str() );
+                else if( grid.get(actor->pos).visible )
+                    msg::normal( "You see %s grab a %s.", 
+                                 actor->name.c_str(), item->name.c_str() );
+
+                items.erase( item );
+                actor->nextMove += 30 - actor->stats()[AGILITY];
+            } 
+            else if( actor == playeriter ) 
+            {
+                msg::normal( "Nothing here to pick up." );
+            }
+        }
+
+        if( act.type == Action::DROP )
+            drop( actor, act.inventoryIndex );
 
         if( act.type == Action::QUIT ) {
             printf( "QUIT received.\n" );
             return 0;
+        }
+
+        if( act.type == Action::EAT ) 
+        {
+            unsigned int ii = act.inventoryIndex;
+            if( actor->in_inventory(ii) ) {
+                Actor::Inventory& inv = actor->inventory;
+                const Stats& istats = inv[ii].stats;
+
+                int hpEffect = istats[HP] * istats[NUTRITION];
+                actor->hp = clamp( actor->hp+hpEffect, 0, actor->stats()[HP] );
+
+                if( actor == playeriter )
+                    msg::normal( "You eat the %s.", inv[ii].name.c_str() );
+
+                actor->drop( ii );
+
+                // Larger animals have more HP and take longer to eat.
+                actor->nextMove += 30 + istats[HP];
+
+                if( not actor->hp ) {
+                    expire( actor );
+                    continue;
+                }
+            } 
         }
 
         /* 
@@ -322,7 +527,7 @@ int main()
         // Don't let a turn go on infinitely. 
         // NPC didn't move or actor is waiting.
         if( actor->nextMove == time )
-            actor->nextMove += actor->stats[AGILITY]/2;
+            actor->nextMove += actor->stats()[AGILITY]/2;
     }
 
     if( playeriter == std::end(actors) )
@@ -353,9 +558,16 @@ void generate_grid()
         std::copy_n( line, grid.width, grid.row_begin(y) );
     }
 
+    // Look for items available at this level.
+    auto availableItems = pure::filter (
+        []( const ThingData& item ) { return item.minlvl >= 0; },
+        catalogue
+    );
+
     // Read spawn points.
     char spawnpt[50];
-    while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
+    unsigned int nspawns = 10;
+    while( nspawns-- and fgets(spawnpt, sizeof spawnpt, mapgen) ) {
         if( spawnpt[0] != 'X' )
             continue;
 
@@ -370,8 +582,10 @@ void generate_grid()
             actor.race = "human";
             playeriter = std::begin( actors );
         } else {
-            actor.race = races[ random(0, races.size()-1) ].name;
+            actor.race = random_select(races).name;
             actor.name = "the " + actor.race;
+            actor.pickup( random_select(availableItems) );
+            actor.wield( 0 );
         }
 
         auto raceIter = pure::find( actor.race, races );
@@ -379,12 +593,18 @@ void generate_grid()
             // This should never happen, but if it does...
             raceIter = std::begin( races );
         
-        actor.stats = raceIter->stats;
-        actor.hp    = actor.stats[HP];
+        actor.base = raceIter->stats;
+        actor.hp   = actor.stats()[HP];
     }
 
     if( actors.size() == 0 )
         die( "No spawn point!" );
+
+    while( fgets(spawnpt, sizeof spawnpt, mapgen) ) {
+        items.emplace_back( random_select(availableItems), Vec(0,0) );
+        MapItem& item = items.back();
+        sscanf( spawnpt, "X %u %u", &item.pos.x(), &item.pos.y() );
+    }
 
     pclose( mapgen );
 
@@ -405,58 +625,90 @@ void update_map( const Vec& pos )
     playerDistance.compute( pos.x(), pos.y() );
 }
 
+bool drop( ActorList::iterator actor, unsigned int ii )
+{
+    Actor::Inventory& inv = actor->inventory;
+    if( actor->in_inventory(ii) ) 
+    {
+        const auto item = std::begin(inv) + ii;
+
+        if( fov.isInFov(actor->pos.x(), actor->pos.y()) )
+            msg::normal ( 
+                "%s dropped the %s", 
+                actor == playeriter ? "You" : actor->name.c_str(),
+                item->name.c_str() 
+            );
+        
+        items.emplace_back( std::move(*item), actor->pos );
+        actor->drop( ii );
+
+        return true;
+    } 
+    else if( actor == playeriter ) 
+    {
+        msg::normal( "You don't have that!" );
+    }
+
+    return false;
+}
+
 void _look_loop( const Actor& player )
 {
     Vec lpos = player.pos; // Look position.
     while( true )
     {
         playerDistance.setPath( lpos.x(), lpos.y() );
+        Tile& t = grid.get( lpos );
 
-        Vec pos = lpos;
-        do {
+        // Highlight the path from the cursor to the player.
+        // Iterate only once if the player hasn't discovered this tile.
+        Vec pos = lpos; do {
             grid.get(pos).highlight = true;
             playerDistance.walk( &pos.x(), &pos.y() );
-        } while( playerDistance.size() > 0 );
+        } while( playerDistance.size() > 0 and t.seen );
 
         // Loop terminates before highlighting player's position.
         grid.get(player.pos).highlight = true;
 
         // Tell the player what they're looking at.
-        if( grid.get(lpos).visible )
-        {
-            const int INFO_LEN = 20;
-            std::string info;
+        const int INFO_LEN = 20;
+        std::string info;
 
-            switch( grid.get(lpos).c ) {
-              case '.': info = "A stone floor."; break;
-              case '#': info = "A stone wall."; break;
-            }
-
-            ActorList::iterator actor;
-            if( (actor = actor_at(lpos)) != std::end(actors) ) {
-                char cinfo[INFO_LEN];
-                if( actor == playeriter )
-                    sprintf( cinfo, "It's you!" );
-                else
-                    sprintf( cinfo, "You see %s.", actor->name.c_str() );
-                info = cinfo;
-            }
-
-            static TCODConsole infobox(INFO_LEN,1);
-
-            infobox.setDefaultForeground( TCODColor::green );
-            infobox.print( 0, 0, info.c_str() );
-
-            TCODConsole::blit (
-                &infobox, 0, 0, info.size(), 1,
-                &overlay, 
-                // Draw it centered on the x-axis
-                clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
-                // and just above or below on the y-axis.
-                lpos.y() + (lpos.y() > 3 ? -2 : +2),
-                1, 0.5f
-            );
+        switch( t.c ) {
+          case '.': info = "A stone floor."; break;
+          case '#': info = "A stone wall."; break;
         }
+
+        ActorList::iterator actor;
+        ItemList::iterator item;
+        if( t.visible and (actor=actor_at(lpos)) != std::end(actors) ) {
+            char cinfo[INFO_LEN];
+            if( actor == playeriter )
+                sprintf( cinfo, "It's you!" );
+            else
+                sprintf( cinfo, "You see a %s.", actor->name.c_str() );
+            info = cinfo;
+        } else if( (item=item_at(lpos)) != std::end(items) ) {
+            info = "You see a " + item->name + ".";
+        }
+
+        if( not t.seen )
+            info = "(undiscovered)";
+
+        static TCODConsole infobox(INFO_LEN,1);
+
+        infobox.setDefaultForeground( TCODColor::green );
+        infobox.print( 0, 0, info.c_str() );
+
+        TCODConsole::blit (
+            &infobox, 0, 0, info.size(), 1,
+            &overlay, 
+            // Draw centered on the x-axis
+            clamp( lpos.x()-info.size()/2, 1, grid.width-info.size() ), 
+            // and just above or below on the y-axis.
+            lpos.y() + (lpos.y() > 3 ? -2 : +2),
+            1, 0.5f
+        );
 
         render();
 
@@ -480,6 +732,57 @@ void _look_loop( const Actor& player )
     }
 }
 
+/* 
+ * Render the inventory; wait for key press.
+ * Returns an inventory index, assuming the player hit a key corresponding to a
+ * held item.
+ */
+int _render_inventory( const Actor& player )
+{
+    if( not player.inventory.size() )
+        msg::normal( "You don't have anything." );
+
+    TCODConsole invcons( grid.width/2, player.inventory.size() + 3 );
+
+    // Number of lines before inventory proper. 
+    unsigned int heading = 0;
+
+    if( player.wielding() )
+    {
+        heading = 1;
+
+        invcons.setDefaultForeground( TCODColor::green );
+        invcons.print( 0, heading++, "A - (%c)%s -- wielded.",
+                       player.weapon.symbol, player.weapon.name.c_str() );
+    }
+
+    unsigned int y = 0;
+    invcons.setDefaultForeground( TCODColor::white );
+    for( const Item& i : player.inventory ) 
+        invcons.print( 0, heading + y++, 
+                       "%c - (%c)%s", iitoc(y), i.symbol, i.name.c_str() );
+
+    invcons.setDefaultForeground( TCODColor::red );
+    invcons.print( 0, heading + y, "Press any key." );
+
+    TCODConsole::blit (
+        &invcons, 0, 0, invcons.getWidth(), heading + y,
+        &overlay,
+        // Draw centered.
+        grid.width  / 2 - invcons.getWidth()  / 2, 
+        grid.height / 2 - invcons.getHeight() / 2
+    );
+
+    // Show the inventory (printed to overlay).
+    render();
+    // Wait for the player to finish reading.
+    int k = next_pressed_key();
+    // Erase the inventory.
+    render();
+
+    return ctoii( k );
+}
+
 Action move_player( Actor& player )
 {
     Vec pos( 0, 0 );
@@ -500,7 +803,59 @@ Action move_player( Actor& player )
 
       case '.': case '5': return Action::WAIT;
 
-      case 'L': _look_loop( player ); break;
+      case 'L': _look_loop( player ); 
+                return move_player(player);
+
+      case 'i':  _render_inventory( player ); 
+                 return move_player(player);
+
+      case 'g': return Action::PICKUP;
+
+      case 'd': // Drop
+        {
+            msg::special( "Pick an item." );
+            // _render_inventory will display this message and return an
+            // inventory index.
+            int ii = _render_inventory( player );
+
+            if( ii < player.inventory.size() and ii >= 0 ) {
+                return Action( Action::DROP, ii );
+            } else {
+                msg::normal( "You don't have that!", ii );
+                render();
+                return move_player( player );
+            }
+        }
+
+      case 'e': // Equip
+        {
+            msg::special( "Equip what? (Type '.' (period) for nothing.)" );
+            unsigned int ii = _render_inventory( player );
+            if( player.in_inventory(ii) ) 
+            {
+                player.wield( ii );
+                msg::special( "Eqipped %s.", player.weapon.name.c_str() );
+                render();
+            } 
+            else if( ii == ctoii('.') )
+            {
+                if( not player.unwield() )
+                    msg::special( "You weren't wielding anything." );
+            }
+
+            return move_player( player );
+        }
+
+      case 'E': // Eat
+        {
+            msg::special( "Eat what?" );
+            unsigned int ii = _render_inventory( player );
+            if( player.in_inventory(ii) )
+                return Action( Action::EAT, ii );
+
+            msg::normal( "You don't have that." );
+        }
+
 
       default: ;
     }
@@ -530,8 +885,8 @@ Action move_monst( Actor& monst )
 
 bool attack( const Actor& aggressor, Actor& victim )
 {
-    const Stats& as = aggressor.stats;
-    const Stats& vs = victim.stats;
+    Stats as = aggressor.stats();
+    const Stats& vs = victim.stats();
 
     const char* const HIT    = "hit";
     const char* const DODGED = "dodged";
@@ -568,15 +923,16 @@ bool attack( const Actor& aggressor, Actor& victim )
         }
     } 
 
-    if( verb != DODGED ) {
-        msg::combat( "%s %s %s%c", 
-                     aggressor.name.c_str(), verb, victim.name.c_str(),
-                     criticalHit ? '!' : '.' );
+    if( verb == DODGED ) {
+        msg::combat( "%s dodged %s's %s.", 
+                     victim.name.c_str(), aggressor.name.c_str(),
+                     aggressor.weapon.name.c_str() );
     } else {
-        // "the aggressor dodged the victim" doesn't make sense, 
-        // so do something different for dodging.
-        msg::combat( "%s dodged %s's attack.", 
-                     victim.name.c_str(), aggressor.name.c_str() );
+        msg::combat( "%s's %s %s %s%c", // "attacker's wpn (hit/missed) who(./!)"
+                     aggressor.name.c_str(), aggressor.weapon.name.c_str(),
+                     verb, 
+                     victim.name.c_str(),
+                     criticalHit ? '!' : '.' );
     }
 
     return verb == KILLED;
@@ -590,9 +946,11 @@ void render()
         for( unsigned int y=0; y < grid.height; y++ ) 
         {
             /*
-             * Draw any tile, except those the player hasn't discovered, but
-             * color them according to whether they can be seen now, or have
-             * been seen.
+             * Draw any tile, except those the player hasn't discovered.
+             * color them according to whether or not:
+             *  they can be seen now (visible),
+             *  have been discovered (seen),
+             *  is highlighted (highlight).
              */
             Tile& t = grid.get( x, y );
 
@@ -601,9 +959,19 @@ void render()
             else
                 t.visible = false;
 
-            if( not t.seen )
-                // Not in view, nor discovered.
+            // Not in view, nor discovered.
+            if( not t.seen ) { 
+                // Player may be looking at this tile. 
+                if( t.highlight ) {
+                    // Print the cursor.
+                    overlay.setChar( x, y, 'X' );
+                    overlay.setCharForeground( x, y, TCODColor::black );
+                    overlay.setCharBackground( x, y, TCODColor::grey );
+                    t.highlight = false;
+                }
+
                 continue;
+            }
 
             TCODConsole::root->setChar( x, y, t.c );
 
@@ -629,15 +997,36 @@ void render()
                 }
             }
 
+            float light = 1.0f;
             if( t.highlight ) {
-                bg = bg * 1.5;
-                fg = fg * 1.5;
                 t.highlight = false;
+                light = t.visible ? 1.5f : 3.f;
             }
+
+            bg = bg * light;
+            fg = fg * light;
 
             TCODConsole::root->setCharForeground( x, y, fg );
             TCODConsole::root->setCharBackground( x, y, bg );
         }
+    }
+
+    for( auto& item : items ) {
+        const Vec& pos = item.pos;
+        if( not grid.get(pos).visible )
+            continue;
+
+        int symbol = 'X';
+        TCODColor color = TCODColor::white;
+
+        auto itemiter = pure::find( item.name, catalogue );
+        if( itemiter != std::end(catalogue) ) {
+            symbol = itemiter->symbol;
+            color  = itemiter->color;
+        }
+
+        TCODConsole::root->setChar( pos.x(), pos.y(), symbol );
+        TCODConsole::root->setCharForeground( pos.x(), pos.y(), color );
     }
 
     for( auto& actor : actors ) {
@@ -696,13 +1085,14 @@ void render()
         overlay.setDefaultBackground( TCODColor::red );
         overlay.setDefaultForeground( TCODColor::white );
         unsigned int width = 
-            (float(playeriter->hp)/playeriter->stats[HP]) * (grid.width/2);
+            (float(playeriter->hp)/playeriter->stats()[HP]) * (grid.width/2);
         overlay.hline( 0, y, width, TCOD_BKGND_SET );
 
         const char* healthFmt = width > sizeof "xx / xx" ? 
             "%u / %u" : "%u/%u";
         char* healthInfo;
-        asprintf( &healthInfo, healthFmt, playeriter->hp, playeriter->stats[HP] );
+        asprintf( &healthInfo, healthFmt, 
+                  playeriter->hp, playeriter->stats()[HP] );
         if( healthInfo ) {
             TCOD_alignment_t allignment = strlen(healthInfo) < width ?
                 TCOD_CENTER : TCOD_LEFT;
