@@ -321,7 +321,9 @@ void expire( ActorList::iterator actor )
 
     if( raceiter != std::end(races) ) {
         items.emplace_back( *raceiter, actor->pos );
-        items.back().symbol = '%';
+        Item& i = items.back();
+        i.symbol = '%';
+        i.name = i.name + "'s corpse";
     }
 
     actors.erase( actor );
